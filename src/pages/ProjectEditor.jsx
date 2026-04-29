@@ -4,7 +4,7 @@ import { auth } from '../firebase.js';
 import emailjs from 'emailjs-com';
 
 const EMAILJS_SERVICE = 'service_4l933ap';
-const EMAILJS_PUBKEY = 'j2smuu518um43TmFj';
+const EMAILJS_PUBLIC_KEY = 'j2smuu518um43TmFj';
 const TEMPLATE_CHECKER = 'template_f0d6bhd';
 const TEMPLATE_ENCODING = 'template_enf305b';
 const APP_URL = 'https://mydramasubita-boop.github.io/MyDrama-staff/';
@@ -15,13 +15,15 @@ function parseASS(text) {
   let inEvents = false, format = [];
   for (const line of lines) {
     if (line.trim() === '[Events]') { inEvents = true; continue; }
-    if (inEvents && line.startsWith('Format:')) { format = line.replace('Format:', '').split(',').map(s => s.trim()); continue; }
+    if (inEvents && line.startsWith('Format:')) {
+      format = line.replace('Format:', '').split(',').map(s => s.trim()); continue;
+    }
     if (inEvents && line.startsWith('Dialogue:')) {
       const vals = line.replace('Dialogue:', '').split(',');
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, ' ').trim();
-      if (txt) segments.push({ id: `${obj.Start}_${obj.End}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start) });
+      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start) });
     }
   }
   return segments;
@@ -34,8 +36,8 @@ function parseSRT(text) {
     const lines = block.trim().split('\n');
     if (lines.length < 3) continue;
     const times = lines[1].split(' --> ');
-    const start = times[0]?.trim().replace(',', '.');
-    const end = times[1]?.trim().replace(',', '.');
+    const start = times[0]?.trim();
+    const end = times[1]?.trim();
     const txt = lines.slice(2).join(' ').replace(/<[^>]*>/g, '').trim();
     if (txt && start) segments.push({ id: `seg_${segments.length}`, start, end, original: txt, startSec: timeToSec(start) });
   }
@@ -49,16 +51,18 @@ function timeToSec(t) {
   return 0;
 }
 
-export default function ProjectEditor({ episode, series, profile, onBack }) {
+export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [segments, setSegments] = useState([]);
   const [translations, setTranslations] = useState({});
   const [activeIdx, setActiveIdx] = useState(0);
   const [users, setUsers] = useState([]);
-  const [showCheckerModal, setShowCheckerModal] = useState(false);
-  const [showEncodingModal, setShowEncodingModal] = useState(false);
-  const [sendLoading, setSendLoading] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState('');
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [sendType, setSendType] = useState('');
+  const [sendTo, setSendTo] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState('');
   const videoRef = useRef(null);
+  const activeSegRef = useRef(null);
 
   useEffect(() => {
     if (!episode.assUrl) return;
@@ -72,49 +76,86 @@ export default function ProjectEditor({ episode, series, profile, onBack }) {
   }, [episode.assUrl]);
 
   useEffect(() => {
-    const unsub = getSegments(episode.id, setTranslations);
+    const unsub = getSegments(series.id, episode.id, setTranslations);
     return unsub;
-  }, [episode.id]);
+  }, [series.id, episode.id]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
 
-  const activeSegment = segments[activeIdx];
+  useEffect(() => {
+    if (episode.status === 'pending') updateEpisode(series.id, episode.id, { status: 'translating' });
+  }, []);
 
-  const seekTo = (seg) => { if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec; };
-
-  const handleSegmentClick = (idx) => { setActiveIdx(idx); seekTo(segments[idx]); };
+  const handleSegmentClick = (idx) => {
+    setActiveIdx(idx);
+    if (videoRef.current && segments[idx]) videoRef.current.currentTime = segments[idx].startSec;
+  };
 
   const handleTranslationChange = (val) => {
-    if (!activeSegment) return;
-    saveSegment(episode.id, activeSegment.id, { original: activeSegment.original, translated: val, translatedBy: auth.currentUser?.uid });
+    const seg = segments[activeIdx];
+    if (!seg) return;
+    saveSegment(series.id, episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Tab') {
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
       e.preventDefault();
-      if (e.shiftKey) { if (activeIdx > 0) { setActiveIdx(i => i - 1); seekTo(segments[activeIdx - 1]); } }
-      else { if (activeIdx < segments.length - 1) { setActiveIdx(i => i + 1); seekTo(segments[activeIdx + 1]); } }
+      const next = activeIdx + 1;
+      if (next < segments.length) {
+        setActiveIdx(next);
+        if (videoRef.current) videoRef.current.currentTime = segments[next].startSec;
+        setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      }
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = activeIdx - 1;
+      if (prev >= 0) {
+        setActiveIdx(prev);
+        if (videoRef.current) videoRef.current.currentTime = segments[prev].startSec;
+        setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      }
     }
   };
 
-  const sendEmail = async (templateId, toUser, onSuccess) => {
-    setSendLoading(true);
+  const sendNotification = async () => {
+    const recipient = users.find(u => u.id === sendTo);
+    if (!recipient && sendType === 'checker') return;
+    setSending(true); setSendResult('');
     try {
+      const isChecker = sendType === 'checker';
+      const templateId = isChecker ? TEMPLATE_CHECKER : TEMPLATE_ENCODING;
+      const toEmail = isChecker ? recipient.email : auth.currentUser?.email;
+      const toName = isChecker ? recipient.name : 'Admin';
       await emailjs.send(EMAILJS_SERVICE, templateId, {
-        to_name: toUser.name,
-        to_email: toUser.email,
+        to_email: toEmail,
+        to_name: toName,
         from_name: profile.name,
         project_title: series.title,
-        episode: `${episode.number} — ${episode.title}`,
+        episode: episode.number,
         app_url: APP_URL,
-      }, EMAILJS_PUBKEY);
-      if (templateId === TEMPLATE_CHECKER) await updateEpisode(episode.id, { status: 'translation_done' });
-      else await updateEpisode(episode.id, { status: 'check_done' });
-      setSendSuccess('Email inviata!');
-      setTimeout(() => setSendSuccess(''), 3000);
-      onSuccess();
-    } catch (e) { alert('Errore invio email: ' + e.message); }
-    setSendLoading(false);
+      }, EMAILJS_PUBLIC_KEY);
+      await updateEpisode(series.id, episode.id, { status: isChecker ? 'translation_done' : 'check_done' });
+      setSendResult('✅ Notifica inviata!');
+      setTimeout(() => { setShowSendModal(false); setSendResult(''); }, 1500);
+    } catch (e) {
+      setSendResult('❌ Errore: ' + (e.text || e.message));
+    }
+    setSending(false);
+  };
+
+  const exportSRT = () => {
+    let srt = '';
+    segments.forEach((seg, i) => {
+      const t = translations[seg.id]?.translated || '';
+      const startSRT = seg.start.replace('.', ',');
+      const endSRT = (seg.end || '').replace('.', ',');
+      srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t}\n\n`;
+    });
+    const blob = new Blob([srt], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${series.title}_ep${episode.number}_IT.srt`; a.click();
   };
 
   const completedCount = segments.filter(s => translations[s.id]?.translated?.trim()).length;
@@ -122,47 +163,48 @@ export default function ProjectEditor({ episode, series, profile, onBack }) {
 
   return (
     <div className="editor-layout">
-      {/* Player */}
       <div className="editor-player">
-        <video ref={videoRef} src={episode.videoUrl} controls style={{ width: '100%', height: '55%', background: '#000', display: 'block' }} />
+        {episode.videoUrl ? (
+          <video ref={videoRef} src={episode.videoUrl} controls style={{ width: '100%', height: '55%', background: '#000', display: 'block' }} />
+        ) : (
+          <div style={{ height: '55%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>Nessun video collegato</div>
+        )}
         <div className="editor-player-info">
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4 }}>{series.title}</div>
-          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>Ep. {episode.number} — {episode.title}</div>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>{completedCount}/{segments.length} tradotti ({progress}%)</div>
-          <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2, marginBottom: 12 }}>
+          <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-          {activeSegment && (
-            <div style={{ padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 13 }}>
-              <div style={{ color: 'var(--primary)', fontFamily: 'monospace', fontSize: 11, marginBottom: 4 }}>{activeSegment.start} → {activeSegment.end}</div>
-              <div style={{ color: 'var(--text2)', lineHeight: 1.5 }}>{activeSegment.original}</div>
-              {translations[activeSegment.id]?.translated && (
-                <div style={{ color: 'var(--text)', marginTop: 6, lineHeight: 1.5 }}>🇮🇹 {translations[activeSegment.id].translated}</div>
+          {segments[activeIdx] && (
+            <div style={{ marginTop: 14, padding: 12, background: 'var(--bg3)', borderRadius: 8 }}>
+              <div style={{ color: 'var(--primary)', fontFamily: 'monospace', fontSize: 11, marginBottom: 4 }}>{segments[activeIdx].start} → {segments[activeIdx].end}</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)' }}>{segments[activeIdx].original}</div>
+              {translations[segments[activeIdx].id]?.translated && (
+                <div style={{ fontSize: 13, color: 'var(--text)', marginTop: 6 }}>🇮🇹 {translations[segments[activeIdx].id].translated}</div>
               )}
             </div>
           )}
-          {sendSuccess && <div style={{ marginTop: 12, padding: 10, background: 'rgba(0,229,160,0.15)', border: '1px solid var(--success)', borderRadius: 8, color: 'var(--success)', fontSize: 13 }}>✅ {sendSuccess}</div>}
         </div>
       </div>
 
-      {/* Segmenti */}
       <div className="editor-segments">
         <div className="editor-header">
           <button className="btn btn-sm btn-outline" onClick={onBack}>← Torna ai progetti</button>
-          <div style={{ color: 'var(--text2)', fontSize: 11 }}>Tab = avanti · Shift+Tab = indietro</div>
+          <div style={{ fontSize: 11, color: 'var(--text2)' }}>Invio/↓ = successivo • ↑ = precedente</div>
         </div>
 
         <div className="segments-list">
           {segments.length === 0 && (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text2)' }}>
-              {episode.assUrl ? 'Caricamento file subtitoli...' : '⚠️ Nessun file .ass/.srt collegato.'}
+              {episode.assUrl ? 'Caricamento file in corso...' : 'Nessun file .ass/.srt collegato.'}
             </div>
           )}
           {segments.map((seg, idx) => {
             const t = translations[seg.id];
             const isActive = idx === activeIdx;
             return (
-              <div key={seg.id} className={`segment-card ${isActive ? 'active' : ''}`} onClick={() => handleSegmentClick(idx)}>
+              <div key={seg.id} ref={isActive ? activeSegRef : null} className={`segment-card ${isActive ? 'active' : ''}`} onClick={() => handleSegmentClick(idx)}>
                 <div className="segment-time">{seg.start} → {seg.end}</div>
                 <div className="segment-original">{seg.original}</div>
                 {isActive ? (
@@ -171,14 +213,14 @@ export default function ProjectEditor({ episode, series, profile, onBack }) {
                     value={t?.translated || ''}
                     onChange={e => handleTranslationChange(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Scrivi la traduzione in italiano..."
+                    placeholder="Scrivi la traduzione italiana..."
                     autoFocus
                     onClick={e => e.stopPropagation()}
                   />
                 ) : (
                   t?.translated
                     ? <div className="segment-translated">🇮🇹 {t.translated}</div>
-                    : <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)' }}>Non tradotto</div>
+                    : <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>Non tradotto</div>
                 )}
               </div>
             );
@@ -186,73 +228,50 @@ export default function ProjectEditor({ episode, series, profile, onBack }) {
         </div>
 
         <div className="editor-actions">
-          <button className="btn btn-sm btn-outline" onClick={() => setShowCheckerModal(true)}>
-            ✉️ Traduzione completata → invia al checker
+          <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>
+            ✉️ Traduzione completata → Invia al checker
           </button>
-          <button className="btn btn-sm btn-success" onClick={() => setShowEncodingModal(true)}>
-            ✅ Check completato → invia per encoding
+          <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>
+            ✅ Check completato → Invia per encoding
           </button>
           {segments.length > 0 && (
-            <button className="btn btn-sm btn-outline" onClick={() => {
-              let srt = '';
-              segments.forEach((seg, i) => {
-                const t = translations[seg.id]?.translated || seg.original;
-                srt += `${i + 1}\n${seg.start.replace('.', ',')} --> ${seg.end.replace('.', ',')}\n${t}\n\n`;
-              });
-              const blob = new Blob([srt], { type: 'text/plain' });
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              a.download = `${series.title}_ep${episode.number}_IT.srt`;
-              a.click();
-            }}>⬇️ Esporta .srt</button>
+            <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>
           )}
         </div>
       </div>
 
-      {showCheckerModal && (
-        <SendModal
-          title="✉️ Invia al checker"
-          users={users.filter(u => u.id !== auth.currentUser?.uid)}
-          loading={sendLoading}
-          onSend={(user) => sendEmail(TEMPLATE_CHECKER, user, () => setShowCheckerModal(false))}
-          onClose={() => setShowCheckerModal(false)}
-        />
-      )}
-
-      {showEncodingModal && (
-        <SendModal
-          title="✅ Invia per encoding"
-          users={users.filter(u => u.id !== auth.currentUser?.uid)}
-          loading={sendLoading}
-          onSend={(user) => sendEmail(TEMPLATE_ENCODING, user, () => setShowEncodingModal(false))}
-          onClose={() => setShowEncodingModal(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function SendModal({ title, users, loading, onSend, onClose }) {
-  const [selectedId, setSelectedId] = useState('');
-  const selected = users.find(u => u.id === selectedId);
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">{title}</div>
-        <div className="form-row">
-          <label className="label">Seleziona destinatario</label>
-          <select className="input-field" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
-            <option value="">-- Seleziona --</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
-          </select>
+      {showSendModal && (
+        <div className="modal-overlay" onClick={() => setShowSendModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">
+              {sendType === 'checker' ? '✉️ Invia al checker' : '✅ Invia per encoding'}
+            </div>
+            <p style={{ color: 'var(--text2)', fontSize: 14, marginBottom: 20 }}>
+              {sendType === 'checker'
+                ? `La traduzione di ${series.title} Ep.${episode.number} verrà segnalata come completata.`
+                : `Il check di ${series.title} Ep.${episode.number} verrà segnalato come completato.`}
+            </p>
+            {sendType === 'checker' && (
+              <div className="form-row">
+                <label className="label">Seleziona checker</label>
+                <select className="input-field" value={sendTo} onChange={e => setSendTo(e.target.value)}>
+                  <option value="">-- Seleziona --</option>
+                  {users.filter(u => u.id !== auth.currentUser?.uid).map(u => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {sendResult && <div style={{ marginTop: 12, textAlign: 'center', fontSize: 14 }}>{sendResult}</div>}
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setShowSendModal(false)}>Annulla</button>
+              <button className="btn btn-grad" onClick={sendNotification} disabled={sending || (sendType === 'checker' && !sendTo)}>
+                {sending ? 'Invio...' : 'Invia notifica'}
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="modal-footer">
-          <button className="btn btn-outline" onClick={onClose}>Annulla</button>
-          <button className="btn btn-grad" onClick={() => selected && onSend(selected)} disabled={!selectedId || loading}>
-            {loading ? 'Invio...' : 'Invia email'}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

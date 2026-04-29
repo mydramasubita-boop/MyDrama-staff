@@ -13,7 +13,7 @@ export default function Login({ onLogin }) {
     try {
       const cred = await loginUser(email, password);
       const profile = await getUserProfile(cred.user.uid);
-      if (!profile) { setError('Profilo non trovato. Contatta l\'admin.'); setLoading(false); return; }
+      if (!profile) { setError("Profilo non trovato. Contatta l'admin."); setLoading(false); return; }
       onLogin(cred.user, profile);
     } catch (err) {
       setError('Credenziali non valide.');
