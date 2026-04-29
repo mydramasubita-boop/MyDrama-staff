@@ -164,11 +164,34 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   return (
     <div className="editor-layout">
       <div className="editor-player">
-        {episode.videoUrl ? (
-          <video ref={videoRef} src={episode.videoUrl} controls style={{ width: '100%', height: '55%', background: '#000', display: 'block' }} />
-        ) : (
-          <div style={{ height: '55%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>Nessun video collegato</div>
-        )}
+        <div style={{ position: 'relative', height: '55%', background: '#000' }}>
+          {episode.videoUrl ? (
+            <video ref={videoRef} src={episode.videoUrl} controls style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' }} />
+          ) : (
+            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>Nessun video collegato</div>
+          )}
+          {/* Overlay sottotitoli sul video */}
+          {segments[activeIdx] && (
+            <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 16px' }}>
+              {translations[segments[activeIdx].id]?.translated && (
+                <div style={{
+                  display: 'inline-block',
+                  background: 'rgba(0,0,0,0.75)',
+                  color: 'white',
+                  fontSize: 16,
+                  fontWeight: 'bold',
+                  padding: '6px 14px',
+                  borderRadius: 6,
+                  textShadow: '1px 1px 2px #000',
+                  maxWidth: '90%',
+                  lineHeight: 1.4,
+                }}>
+                  {translations[segments[activeIdx].id].translated}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <div className="editor-player-info">
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4 }}>{series.title}</div>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
@@ -176,15 +199,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-          {segments[activeIdx] && (
-            <div style={{ marginTop: 14, padding: 12, background: 'var(--bg3)', borderRadius: 8 }}>
-              <div style={{ color: 'var(--primary)', fontFamily: 'monospace', fontSize: 11, marginBottom: 4 }}>{segments[activeIdx].start} → {segments[activeIdx].end}</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)' }}>{segments[activeIdx].original}</div>
-              {translations[segments[activeIdx].id]?.translated && (
-                <div style={{ fontSize: 13, color: 'var(--text)', marginTop: 6 }}>🇮🇹 {translations[segments[activeIdx].id].translated}</div>
-              )}
-            </div>
-          )}
+
         </div>
       </div>
 
