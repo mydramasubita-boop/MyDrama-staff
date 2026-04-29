@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { saveSegment, getSegments, updateEpisode, getAllUsers } from '../firebase.js';
-import { auth } from '../firebase.js';
+import { saveSegment, getSegments, updateEpisode, getAllUsers } from './firebase.js';
+import { auth } from './firebase.js';
 import emailjs from 'emailjs-com';
 
 const EMAILJS_SERVICE = 'service_4l933ap';
