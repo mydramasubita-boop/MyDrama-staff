@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { auth, getUserProfile } from './firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
-
-// Percorsi aggiornati verso la sottocartella /src/pages/
 import Login from './pages/Login.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 import StaffDashboard from './pages/StaffDashboard.jsx';
@@ -12,18 +10,17 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [currentEpisode, setCurrentEpisode] = useState(null);
-  const [currentSeries, setCurrentSeries] = useState(null);
+  const [currentEpisode, setCurrentEpisode] = useState(null); // { series, episode }
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       if (u) {
         const p = await getUserProfile(u.uid);
-        setUser(u); 
+        setUser(u);
         setProfile(p);
-      } else { 
-        setUser(null); 
-        setProfile(null); 
+      } else {
+        setUser(null);
+        setProfile(null);
       }
       setLoading(false);
     });
@@ -40,24 +37,24 @@ export default function App() {
 
   if (currentEpisode) return (
     <ProjectEditor
-      episode={currentEpisode}
-      series={currentSeries}
+      episode={currentEpisode.episode}
+      series={currentEpisode.series}
       profile={profile}
-      onBack={() => { setCurrentEpisode(null); setCurrentSeries(null); }}
+      onBack={() => setCurrentEpisode(null)}
     />
   );
 
   if (profile?.role === 'admin') return (
-    <AdminDashboard 
-      profile={profile} 
-      onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} 
+    <AdminDashboard
+      profile={profile}
+      onOpenEpisode={(data) => setCurrentEpisode(data)}
     />
   );
 
   return (
-    <StaffDashboard 
-      profile={profile} 
-      onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} 
+    <StaffDashboard
+      profile={profile}
+      onOpenEpisode={(data) => setCurrentEpisode(data)}
     />
   );
 }
