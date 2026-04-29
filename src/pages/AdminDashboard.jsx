@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { auth, logoutUser, getAllUsers, createUser, saveUserProfile, createProject, getProjects, deleteProject, updateProject } from '../firebase.js';
+import { logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from '../firebase.js';
 
-export default function AdminDashboard({ profile, onOpenProject }) {
+export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [tab, setTab] = useState('projects');
-  const [projects, setProjects] = useState([]);
+  const [series, setSeries] = useState([]);
   const [users, setUsers] = useState([]);
-  const [showNewProject, setShowNewProject] = useState(false);
+  const [showNewSeries, setShowNewSeries] = useState(false);
   const [showNewUser, setShowNewUser] = useState(false);
+  const [expandedSeries, setExpandedSeries] = useState({});
 
   useEffect(() => {
-    const unsub = getProjects(setProjects);
+    const unsub = getSeries(setSeries);
     getAllUsers().then(setUsers);
     return unsub;
   }, []);
 
+  const toggleExpand = (id) => setExpandedSeries(prev => ({ ...prev, [id]: !prev[id] }));
   const refreshUsers = () => getAllUsers().then(setUsers);
+  const totalEps = series.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
 
   return (
     <div className="app-layout">
@@ -37,35 +40,28 @@ export default function AdminDashboard({ profile, onOpenProject }) {
             <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <div>
                 <div className="page-title">Progetti</div>
-                <div className="page-subtitle">{projects.length} progetti totali</div>
+                <div className="page-subtitle">{series.length} serie • {totalEps} episodi</div>
               </div>
-              <button className="btn btn-grad" onClick={() => setShowNewProject(true)}>+ Nuovo progetto</button>
+              <button className="btn btn-grad" onClick={() => setShowNewSeries(true)}>+ Nuova serie</button>
             </div>
-            <div className="stats-grid">
-              <div className="stat-card"><div className="stat-num">{projects.length}</div><div className="stat-label">Totale</div></div>
-              <div className="stat-card"><div className="stat-num">{projects.filter(p => p.status === 'in_progress').length}</div><div className="stat-label">In corso</div></div>
-              <div className="stat-card"><div className="stat-num">{projects.filter(p => p.status === 'translation_done').length}</div><div className="stat-label">Da checkare</div></div>
-              <div className="stat-card"><div className="stat-num">{projects.filter(p => p.status === 'check_done').length}</div><div className="stat-label">Pronti</div></div>
-            </div>
-            <div className="card-grid">
-              {projects.map(p => (
-                <div key={p.id} className="project-card" onClick={() => onOpenProject(p)}>
-                  <div className="project-title">{p.title}</div>
-                  <div className="project-ep">Ep. {p.episode} • {p.series}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span className={`project-status status-${p.status}`}>
-                      {p.status === 'in_progress' ? 'In corso' : p.status === 'translation_done' ? 'Da checkare' : 'Pronto per encoding'}
-                    </span>
-                    <button className="btn btn-sm btn-danger" onClick={e => { e.stopPropagation(); if(confirm('Eliminare il progetto?')) deleteProject(p.id); }}>✕</button>
-                  </div>
-                  <div className="project-team">
-                    {(p.team || []).map(uid => {
-                      const u = users.find(u => u.id === uid);
-                      return u ? <span key={uid} className="team-tag">{u.name}</span> : null;
-                    })}
-                  </div>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {series.map(s => (
+                <SeriesCard
+                  key={s.id}
+                  series={s}
+                  users={users}
+                  expanded={!!expandedSeries[s.id]}
+                  onToggle={() => toggleExpand(s.id)}
+                  onDelete={() => { if(confirm('Eliminare la serie?')) deleteSeries(s.id); }}
+                  onOpenEpisode={onOpenEpisode}
+                  onUpdate={(data) => updateSeries(s.id, data)}
+                />
               ))}
+              {series.length === 0 && (
+                <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text2)' }}>
+                  Nessun progetto ancora. Clicca "+ Nuova serie" per iniziare.
+                </div>
+              )}
             </div>
           </>
         )}
@@ -81,9 +77,7 @@ export default function AdminDashboard({ profile, onOpenProject }) {
             </div>
             <div className="card">
               <table className="table">
-                <thead>
-                  <tr><th>Nome</th><th>Email</th><th>Ruolo</th></tr>
-                </thead>
+                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th></tr></thead>
                 <tbody>
                   {users.map(u => (
                     <tr key={u.id}>
@@ -99,24 +93,105 @@ export default function AdminDashboard({ profile, onOpenProject }) {
         )}
       </div>
 
-      {showNewProject && <NewProjectModal users={users} onClose={() => setShowNewProject(false)} />}
+      {showNewSeries && <NewSeriesModal users={users} onClose={() => setShowNewSeries(false)} />}
       {showNewUser && <NewUserModal onClose={() => { setShowNewUser(false); refreshUsers(); }} />}
     </div>
   );
 }
 
-function NewProjectModal({ users, onClose }) {
-  const [form, setForm] = useState({ title: '', series: '', episode: '', videoUrl: '', assUrl: '', team: [] });
-  const [loading, setLoading] = useState(false);
+function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode, onUpdate }) {
+  const [episodes, setEpisodes] = useState([]);
+  const [showAddEp, setShowAddEp] = useState(false);
+  const [editEp, setEditEp] = useState(null);
+  const [editSeries, setEditSeries] = useState(false);
 
-  const toggleTeam = (uid) => {
-    setForm(f => ({ ...f, team: f.team.includes(uid) ? f.team.filter(x => x !== uid) : [...f.team, uid] }));
+  useEffect(() => {
+    if (!expanded) return;
+    const unsub = getEpisodes(series.id, (eps) => {
+      setEpisodes(eps);
+      updateSeries(series.id, { episodeCount: eps.length });
+    });
+    return unsub;
+  }, [expanded, series.id]);
+
+  const statusLabel = (s) => {
+    if (s === 'pending') return { label: 'Da tradurre', cls: 'status-in_progress' };
+    if (s === 'translating') return { label: 'In traduzione', cls: 'status-in_progress' };
+    if (s === 'translation_done') return { label: 'Da checkare', cls: 'status-translation_done' };
+    if (s === 'check_done') return { label: 'Pronto encoding', cls: 'status-check_done' };
+    return { label: s, cls: '' };
   };
 
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderBottom: expanded ? '1px solid var(--border)' : 'none' }} onClick={onToggle}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 16 }}>{series.title}</div>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
+            {series.isFilm ? 'Film' : `Serie • ${series.episodeCount || 0} episodi`}
+            {' • '}
+            {(series.team || []).map(uid => users.find(u => u.id === uid)?.name).filter(Boolean).join(', ')}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); setEditSeries(true); }}>✏️</button>
+          <button className="btn btn-sm btn-danger" onClick={e => { e.stopPropagation(); onDelete(); }}>✕</button>
+          <span style={{ color: 'var(--text2)', fontSize: 18 }}>{expanded ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '16px 24px' }}>
+          <table className="table" style={{ marginBottom: 16 }}>
+            <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th>Azioni</th></tr></thead>
+            <tbody>
+              {episodes.map(ep => {
+                const st = statusLabel(ep.status);
+                return (
+                  <tr key={ep.id}>
+                    <td style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{ep.number}</td>
+                    <td>{ep.title || `Episodio ${ep.number}`}</td>
+                    <td><span className={`project-status ${st.cls}`}>{st.label}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-sm btn-grad" onClick={() => onOpenEpisode({ series, episode: ep })}>Apri</button>
+                        <button className="btn btn-sm btn-outline" onClick={() => setEditEp(ep)}>✏️</button>
+                        <button className="btn btn-sm btn-danger" onClick={() => { if(confirm('Eliminare episodio?')) deleteEpisode(series.id, ep.id); }}>✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!series.isFilm && (
+            <button className="btn btn-sm btn-outline" onClick={() => setShowAddEp(true)}>+ Aggiungi episodio</button>
+          )}
+        </div>
+      )}
+
+      {showAddEp && <EpisodeModal seriesId={series.id} onClose={() => setShowAddEp(false)} />}
+      {editEp && <EpisodeModal seriesId={series.id} episode={editEp} onClose={() => setEditEp(null)} />}
+      {editSeries && <EditSeriesModal series={series} users={users} onUpdate={onUpdate} onClose={() => setEditSeries(false)} />}
+    </div>
+  );
+}
+
+function NewSeriesModal({ users, onClose }) {
+  const [form, setForm] = useState({ title: '', isFilm: false, team: [] });
+  const [epForm, setEpForm] = useState({ number: 1, title: '', videoUrl: '', assUrl: '' });
+  const [loading, setLoading] = useState(false);
+
+  const toggleTeam = (uid) => setForm(f => ({ ...f, team: f.team.includes(uid) ? f.team.filter(x => x !== uid) : [...f.team, uid] }));
+
   const handleSubmit = async () => {
-    if (!form.title || !form.episode) return;
+    if (!form.title) return;
     setLoading(true);
-    await createProject(form);
+    const sid = await createSeries({ ...form, episodeCount: form.isFilm ? 1 : 0 });
+    if (form.isFilm) {
+      await addEpisode(sid, { number: 1, title: form.title, videoUrl: epForm.videoUrl, assUrl: epForm.assUrl });
+      await updateSeries(sid, { episodeCount: 1 });
+    }
     setLoading(false);
     onClose();
   };
@@ -124,16 +199,27 @@ function NewProjectModal({ users, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">Nuovo Progetto</div>
-        <div className="form-row"><label className="label">Titolo drama</label><input className="input-field" placeholder="es. Naeil's Cantabile" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Nome serie (breve)</label><input className="input-field" placeholder="es. Cantabile" value={form.series} onChange={e => setForm(f => ({ ...f, series: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Episodio</label><input className="input-field" type="number" placeholder="es. 9" value={form.episode} onChange={e => setForm(f => ({ ...f, episode: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Link video raw</label><input className="input-field" placeholder="https://..." value={form.videoUrl} onChange={e => setForm(f => ({ ...f, videoUrl: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Link file .ass (o carica su GitHub e incolla il link raw)</label><input className="input-field" placeholder="https://raw.githubusercontent.com/..." value={form.assUrl} onChange={e => setForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+        <div className="modal-title">Nuova Serie / Film</div>
+        <div className="form-row">
+          <label className="label">Titolo</label>
+          <input className="input-field" placeholder="es. Hidden Love" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+        </div>
+        <div className="form-row">
+          <label className="checkbox-item" style={{ display: 'inline-flex' }}>
+            <input type="checkbox" checked={form.isFilm} onChange={e => setForm(f => ({ ...f, isFilm: e.target.checked }))} />
+            <span style={{ marginLeft: 8 }}>È un film (episodio singolo)</span>
+          </label>
+        </div>
+        {form.isFilm && (
+          <>
+            <div className="form-row"><label className="label">Link video raw</label><input className="input-field" placeholder="https://..." value={epForm.videoUrl} onChange={e => setEpForm(f => ({ ...f, videoUrl: e.target.value }))} /></div>
+            <div className="form-row"><label className="label">Link file .ass</label><input className="input-field" placeholder="https://..." value={epForm.assUrl} onChange={e => setEpForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+          </>
+        )}
         <div className="form-row">
           <label className="label">Team assegnato</label>
           <div className="checkbox-group">
-            {users.filter(u => u.role !== 'admin' || true).map(u => (
+            {users.map(u => (
               <label key={u.id} className={`checkbox-item ${form.team.includes(u.id) ? 'checked' : ''}`}>
                 <input type="checkbox" checked={form.team.includes(u.id)} onChange={() => toggleTeam(u.id)} />
                 {u.name}
@@ -143,7 +229,66 @@ function NewProjectModal({ users, onClose }) {
         </div>
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onClose}>Annulla</button>
-          <button className="btn btn-grad" onClick={handleSubmit} disabled={loading}>{loading ? 'Creazione...' : 'Crea progetto'}</button>
+          <button className="btn btn-grad" onClick={handleSubmit} disabled={loading}>{loading ? 'Creazione...' : 'Crea'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EpisodeModal({ seriesId, episode, onClose }) {
+  const [form, setForm] = useState({ number: episode?.number || '', title: episode?.title || '', videoUrl: episode?.videoUrl || '', assUrl: episode?.assUrl || '' });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    if (episode) await updateEpisode(seriesId, episode.id, form);
+    else await addEpisode(seriesId, form);
+    setLoading(false);
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-title">{episode ? 'Modifica episodio' : 'Nuovo episodio'}</div>
+        <div className="form-row"><label className="label">Numero episodio</label><input className="input-field" type="number" value={form.number} onChange={e => setForm(f => ({ ...f, number: parseInt(e.target.value) || '' }))} /></div>
+        <div className="form-row"><label className="label">Titolo episodio (opzionale)</label><input className="input-field" placeholder="es. Il primo incontro" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Link video raw</label><input className="input-field" placeholder="https://..." value={form.videoUrl} onChange={e => setForm(f => ({ ...f, videoUrl: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Link file .ass</label><input className="input-field" placeholder="https://..." value={form.assUrl} onChange={e => setForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" onClick={onClose}>Annulla</button>
+          <button className="btn btn-grad" onClick={handleSubmit} disabled={loading}>{loading ? 'Salvataggio...' : 'Salva'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditSeriesModal({ series, users, onUpdate, onClose }) {
+  const [form, setForm] = useState({ title: series.title, team: series.team || [] });
+  const toggleTeam = (uid) => setForm(f => ({ ...f, team: f.team.includes(uid) ? f.team.filter(x => x !== uid) : [...f.team, uid] }));
+  const handleSubmit = async () => { await onUpdate(form); onClose(); };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-title">Modifica serie</div>
+        <div className="form-row"><label className="label">Titolo</label><input className="input-field" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
+        <div className="form-row">
+          <label className="label">Team assegnato</label>
+          <div className="checkbox-group">
+            {users.map(u => (
+              <label key={u.id} className={`checkbox-item ${form.team.includes(u.id) ? 'checked' : ''}`}>
+                <input type="checkbox" checked={form.team.includes(u.id)} onChange={() => toggleTeam(u.id)} />
+                {u.name}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" onClick={onClose}>Annulla</button>
+          <button className="btn btn-grad" onClick={handleSubmit}>Salva</button>
         </div>
       </div>
     </div>
@@ -162,9 +307,7 @@ function NewUserModal({ onClose }) {
       const cred = await createUser(form.email, form.password);
       await saveUserProfile(cred.user.uid, { name: form.name, email: form.email, role: form.role });
       onClose();
-    } catch (e) {
-      setError(e.message);
-    }
+    } catch (e) { setError(e.message); }
     setLoading(false);
   };
 
@@ -173,8 +316,8 @@ function NewUserModal({ onClose }) {
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-title">Nuovo Utente</div>
         <div className="form-row"><label className="label">Nome</label><input className="input-field" placeholder="Nome Cognome" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Email</label><input className="input-field" type="email" placeholder="email@esempio.it" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Password</label><input className="input-field" type="password" placeholder="••••••••" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Email</label><input className="input-field" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Password</label><input className="input-field" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} /></div>
         <div className="form-row">
           <label className="label">Ruolo</label>
           <select className="input-field" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
