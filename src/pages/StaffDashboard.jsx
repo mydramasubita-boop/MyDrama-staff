@@ -1,19 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { logoutUser, getProjects } from '../firebase.js';
-import { auth } from '../firebase.js';
+import { logoutUser, getSeries, getEpisodes } from './firebase.js';
+import { auth } from './firebase.js';
 
-export default function StaffDashboard({ profile, onOpenProject }) {
-  const [projects, setProjects] = useState([]);
+export default function StaffDashboard({ profile, onOpenEpisode }) {
+  const [series, setSeries] = useState([]);
+  const [expandedSeries, setExpandedSeries] = useState({});
+  const [episodes, setEpisodes] = useState({});
 
   useEffect(() => {
-    const unsub = getProjects(all => {
-      // Mostra solo i progetti in cui l'utente è nel team
-      setProjects(all.filter(p => (p.team || []).includes(auth.currentUser?.uid)));
+    const unsub = getSeries(all => {
+      const mine = all.filter(s => (s.team || []).includes(auth.currentUser?.uid));
+      setSeries(mine);
     });
     return unsub;
   }, []);
 
-  const statusLabel = (s) => s === 'in_progress' ? 'In corso' : s === 'translation_done' ? 'Da checkare' : 'Pronto per encoding';
+  const toggleExpand = (id) => {
+    setExpandedSeries(p => ({ ...p, [id]: !p[id] }));
+    if (!episodes[id]) {
+      getEpisodes(id, eps => setEpisodes(p => ({ ...p, [id]: eps })));
+    }
+  };
+
+  const statusLabel = (s) => ({ pending: 'In attesa', in_progress: 'In corso', translation_done: 'Da checkare', check_done: 'Pronto' })[s] || s;
 
   return (
     <div className="app-layout">
@@ -31,19 +40,35 @@ export default function StaffDashboard({ profile, onOpenProject }) {
       <div className="main-content">
         <div className="page-header">
           <div className="page-title">I miei progetti</div>
-          <div className="page-subtitle">{projects.length} progetti assegnati</div>
+          <div className="page-subtitle">{series.length} serie assegnate</div>
         </div>
-        {projects.length === 0 ? (
-          <div className="card" style={{ textAlign: 'center', padding: '60px', color: 'var(--text2)' }}>
-            Nessun progetto assegnato al momento.
-          </div>
+        {series.length === 0 ? (
+          <div className="card" style={{ textAlign: 'center', padding: '60px', color: 'var(--text2)' }}>Nessun progetto assegnato.</div>
         ) : (
-          <div className="card-grid">
-            {projects.map(p => (
-              <div key={p.id} className="project-card" onClick={() => onOpenProject(p)}>
-                <div className="project-title">{p.title}</div>
-                <div className="project-ep">Ep. {p.episode} • {p.series}</div>
-                <span className={`project-status status-${p.status}`}>{statusLabel(p.status)}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {series.map(s => (
+              <div key={s.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }} onClick={() => toggleExpand(s.id)}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 16 }}>{s.title}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>{s.type === 'film' ? '🎬 Film' : '📺 Serie'}</div>
+                  </div>
+                  <span style={{ color: 'var(--text2)', fontSize: 18 }}>{expandedSeries[s.id] ? '▲' : '▼'}</span>
+                </div>
+                {expandedSeries[s.id] && (
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(episodes[s.id] || []).map(ep => (
+                      <div key={ep.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'var(--bg2)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer' }}
+                        onClick={() => onOpenEpisode(ep, s)}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700 }}>Ep. {ep.number} — {ep.title}</div>
+                        </div>
+                        <span className={`project-status status-${ep.status}`}>{statusLabel(ep.status)}</span>
+                        <button className="btn btn-sm btn-grad">Apri →</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

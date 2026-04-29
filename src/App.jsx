@@ -1,26 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { auth, getUserProfile } from './firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
-import Login from './pages/Login.jsx';
-import AdminDashboard from './pages/AdminDashboard.jsx';
-import StaffDashboard from './pages/StaffDashboard.jsx';
-import ProjectEditor from './pages/ProjectEditor.jsx';
-import './styles.css';
+import Login from './Login.jsx';
+import AdminDashboard from './AdminDashboard.jsx';
+import StaffDashboard from './StaffDashboard.jsx';
+import ProjectEditor from './ProjectEditor.jsx';
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [currentProject, setCurrentProject] = useState(null);
+  const [currentEpisode, setCurrentEpisode] = useState(null);
+  const [currentSeries, setCurrentSeries] = useState(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       if (u) {
         const p = await getUserProfile(u.uid);
         setUser(u); setProfile(p);
-      } else {
-        setUser(null); setProfile(null);
-      }
+      } else { setUser(null); setProfile(null); }
       setLoading(false);
     });
   }, []);
@@ -34,25 +32,20 @@ export default function App() {
 
   if (!user) return <Login onLogin={(u, p) => { setUser(u); setProfile(p); }} />;
 
-  if (currentProject) return (
+  if (currentEpisode) return (
     <ProjectEditor
-      project={currentProject}
+      episode={currentEpisode}
+      series={currentSeries}
       profile={profile}
-      onBack={() => setCurrentProject(null)}
+      onBack={() => { setCurrentEpisode(null); setCurrentSeries(null); }}
     />
   );
 
   if (profile?.role === 'admin') return (
-    <AdminDashboard
-      profile={profile}
-      onOpenProject={setCurrentProject}
-    />
+    <AdminDashboard profile={profile} onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} />
   );
 
   return (
-    <StaffDashboard
-      profile={profile}
-      onOpenProject={setCurrentProject}
-    />
+    <StaffDashboard profile={profile} onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} />
   );
 }

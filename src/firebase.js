@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, addDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -31,25 +31,37 @@ export const getAllUsers = async () => {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };
 
-// ── PROJECTS ──────────────────────────────────────────────────────────
-export const createProject = (data) => {
-  const ref = doc(collection(db, 'projects'));
-  return setDoc(ref, { ...data, id: ref.id, createdAt: Date.now(), status: 'in_progress' });
+// ── SERIES ────────────────────────────────────────────────────────────
+export const createSeries = async (data) => {
+  const ref = await addDoc(collection(db, 'series'), { ...data, createdAt: Date.now() });
+  return ref.id;
 };
-export const getProjects = (callback) => {
-  return onSnapshot(collection(db, 'projects'), snap => {
-    callback(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  });
+export const getSeries = (callback) => onSnapshot(collection(db, 'series'), snap => {
+  callback(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+});
+export const updateSeries = (id, data) => updateDoc(doc(db, 'series', id), data);
+export const deleteSeries = (id) => deleteDoc(doc(db, 'series', id));
+
+// ── EPISODES ─────────────────────────────────────────────────────────
+export const addEpisode = async (seriesId, data) => {
+  const ref = await addDoc(collection(db, 'episodes'), { ...data, seriesId, status: 'pending', createdAt: Date.now() });
+  return ref.id;
 };
-export const updateProject = (id, data) => updateDoc(doc(db, 'projects', id), data);
-export const deleteProject = (id) => deleteDoc(doc(db, 'projects', id));
+export const getEpisodes = (seriesId, callback) => {
+  const q = query(collection(db, 'episodes'), where('seriesId', '==', seriesId));
+  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => a.number - b.number)));
+};
+export const getAllEpisodes = (callback) => onSnapshot(collection(db, 'episodes'), snap => {
+  callback(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+});
+export const updateEpisode = (id, data) => updateDoc(doc(db, 'episodes', id), data);
+export const deleteEpisode = (id) => deleteDoc(doc(db, 'episodes', id));
 
 // ── TRANSLATIONS ──────────────────────────────────────────────────────
-export const saveSegment = (projectId, segmentId, data) =>
-  setDoc(doc(db, 'translations', `${projectId}_${segmentId}`), { ...data, projectId, segmentId, updatedAt: Date.now() }, { merge: true });
-
-export const getSegments = (projectId, callback) => {
-  const q = query(collection(db, 'translations'), where('projectId', '==', projectId));
+export const saveSegment = (episodeId, segmentId, data) =>
+  setDoc(doc(db, 'translations', `${episodeId}_${segmentId}`), { ...data, episodeId, segmentId, updatedAt: Date.now() }, { merge: true });
+export const getSegments = (episodeId, callback) => {
+  const q = query(collection(db, 'translations'), where('episodeId', '==', episodeId));
   return onSnapshot(q, snap => {
     const segs = {};
     snap.docs.forEach(d => { segs[d.data().segmentId] = d.data(); });
