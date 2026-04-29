@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { auth, getUserProfile } from './firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
-import Login from './Login.jsx';
-import AdminDashboard from './AdminDashboard.jsx';
-import StaffDashboard from './StaffDashboard.jsx';
-import ProjectEditor from './ProjectEditor.jsx';
+
+// Percorsi aggiornati verso la sottocartella /src/pages/
+import Login from './pages/Login.jsx';
+import AdminDashboard from './pages/AdminDashboard.jsx';
+import StaffDashboard from './pages/StaffDashboard.jsx';
+import ProjectEditor from './pages/ProjectEditor.jsx';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -17,8 +19,12 @@ export default function App() {
     return onAuthStateChanged(auth, async (u) => {
       if (u) {
         const p = await getUserProfile(u.uid);
-        setUser(u); setProfile(p);
-      } else { setUser(null); setProfile(null); }
+        setUser(u); 
+        setProfile(p);
+      } else { 
+        setUser(null); 
+        setProfile(null); 
+      }
       setLoading(false);
     });
   }, []);
@@ -42,10 +48,16 @@ export default function App() {
   );
 
   if (profile?.role === 'admin') return (
-    <AdminDashboard profile={profile} onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} />
+    <AdminDashboard 
+      profile={profile} 
+      onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} 
+    />
   );
 
   return (
-    <StaffDashboard profile={profile} onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} />
+    <StaffDashboard 
+      profile={profile} 
+      onOpenEpisode={(ep, ser) => { setCurrentEpisode(ep); setCurrentSeries(ser); }} 
+    />
   );
 }
