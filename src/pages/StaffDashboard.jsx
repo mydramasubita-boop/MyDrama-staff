@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { logoutUser, getSeries, getEpisodes } from './firebase.js';
-import { auth } from './firebase.js';
+import { logoutUser, getSeries, getEpisodes } from '../firebase.js';
+import { auth } from '../firebase.js';
 
 export default function StaffDashboard({ profile, onOpenEpisode }) {
   const [series, setSeries] = useState([]);

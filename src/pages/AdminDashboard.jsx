@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from './firebase.js';
+import { auth, logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from '../firebase.js';
 
 export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [tab, setTab] = useState('projects');
