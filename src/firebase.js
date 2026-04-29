@@ -18,7 +18,16 @@ export const auth = getAuth(app);
 // ── AUTH ─────────────────────────────────────────────────────────────
 export const loginUser = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const logoutUser = () => signOut(auth);
-export const createUser = (email, password) => createUserWithEmailAndPassword(auth, email, password);
+
+// Crea utente senza perdere la sessione admin
+export const createUser = async (email, password, adminEmail, adminPassword) => {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  const newUid = cred.user.uid;
+  // Rientra come admin
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
+  return { uid: newUid };
+};
 
 // ── USERS ─────────────────────────────────────────────────────────────
 export const saveUserProfile = (uid, data) => setDoc(doc(db, 'users', uid), data, { merge: true });
@@ -49,19 +58,35 @@ export const addEpisode = async (seriesId, data) => {
 };
 export const getEpisodes = (seriesId, callback) => {
   const q = query(collection(db, 'episodes'), where('seriesId', '==', seriesId));
-  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => a.number - b.number)));
+  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.number - b.number)));
 };
-export const getAllEpisodes = (callback) => onSnapshot(collection(db, 'episodes'), snap => {
-  callback(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-});
-export const updateEpisode = (id, data) => updateDoc(doc(db, 'episodes', id), data);
-export const deleteEpisode = (id) => deleteDoc(doc(db, 'episodes', id));
+// Accetta sia (seriesId, epId, data) che (epId, data) per compatibilità
+export const updateEpisode = (seriesIdOrEpId, epIdOrData, data) => {
+  const epId = data ? epIdOrData : seriesIdOrEpId;
+  const epData = data ? data : epIdOrData;
+  return updateDoc(doc(db, 'episodes', epId), epData);
+};
+export const deleteEpisode = (seriesIdOrEpId, epId) => {
+  const id = epId || seriesIdOrEpId;
+  return deleteDoc(doc(db, 'episodes', id));
+};
 
 // ── TRANSLATIONS ──────────────────────────────────────────────────────
-export const saveSegment = (episodeId, segmentId, data) =>
-  setDoc(doc(db, 'translations', `${episodeId}_${segmentId}`), { ...data, episodeId, segmentId, updatedAt: Date.now() }, { merge: true });
-export const getSegments = (episodeId, callback) => {
-  const q = query(collection(db, 'translations'), where('episodeId', '==', episodeId));
+export const saveSegment = (seriesIdOrEpId, epIdOrSegId, segIdOrData, dataOrUndef) => {
+  // Supporta sia (seriesId, epId, segId, data) che (epId, segId, data)
+  let epId, segId, data;
+  if (dataOrUndef !== undefined) {
+    epId = epIdOrSegId; segId = segIdOrData; data = dataOrUndef;
+  } else {
+    epId = seriesIdOrEpId; segId = epIdOrSegId; data = segIdOrData;
+  }
+  return setDoc(doc(db, 'translations', `${epId}_${segId}`), { ...data, episodeId: epId, segmentId: segId, updatedAt: Date.now() }, { merge: true });
+};
+
+export const getSegments = (seriesIdOrEpId, epIdOrCallback, callbackOrUndef) => {
+  const epId = callbackOrUndef ? epIdOrCallback : seriesIdOrEpId;
+  const callback = callbackOrUndef || epIdOrCallback;
+  const q = query(collection(db, 'translations'), where('episodeId', '==', epId));
   return onSnapshot(q, snap => {
     const segs = {};
     snap.docs.forEach(d => { segs[d.data().segmentId] = d.data(); });
