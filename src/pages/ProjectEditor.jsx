@@ -61,6 +61,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [sendTo, setSendTo] = useState('');
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState('');
+  const [editTiming, setEditTiming] = useState({});
+  const [currentSubtitle, setCurrentSubtitle] = useState(''); // { start, end } per il segmento attivo
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
 
@@ -81,6 +83,32 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   }, [series.id, episode.id]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
+
+  // Sincronizza sottotitoli al video durante riproduzione libera
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onTimeUpdate = () => {
+      const currentTime = video.currentTime;
+      const activeSeg = segments.find(seg => {
+        const start = seg.startSec;
+        const end = timeToSec(seg.end);
+        return currentTime >= start && currentTime <= end;
+      });
+      if (activeSeg) {
+        const t = translations[activeSeg.id];
+        const sub = t?.translated || '';
+        setCurrentSubtitle(sub);
+        // Aggiorna anche il segmento attivo nella lista
+        const idx = segments.indexOf(activeSeg);
+        if (idx !== activeIdx) setActiveIdx(idx);
+      } else {
+        setCurrentSubtitle('');
+      }
+    };
+    video.addEventListener('timeupdate', onTimeUpdate);
+    return () => video.removeEventListener('timeupdate', onTimeUpdate);
+  }, [segments, translations, activeIdx]);
 
   useEffect(() => {
     if (episode.status === 'pending') updateEpisode(series.id, episode.id, { status: 'translating' });
@@ -164,12 +192,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setSending(false);
   };
 
+  const saveTimingEdit = (seg) => {
+    const t = editTiming;
+    if (!t.start || !t.end) return;
+    // Salva timing modificato su Firestore insieme alla traduzione
+    saveSegment(episode.id, seg.id, {
+      original: seg.original,
+      translated: translations[seg.id]?.translated || '',
+      timingStart: t.start,
+      timingEnd: t.end,
+      translatedBy: auth.currentUser?.uid,
+    });
+    setEditTiming({});
+  };
+
   const exportSRT = () => {
     let srt = '';
     segments.forEach((seg, i) => {
       const t = translations[seg.id]?.translated || '';
-      const startSRT = seg.start.replace('.', ',');
-      const endSRT = (seg.end || '').replace('.', ',');
+      const startSRT = (t?.timingStart || seg.start).replace('.', ',');
+      const endSRT = (t?.timingEnd || seg.end || '').replace('.', ',');
       srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t}\n\n`;
     });
     const blob = new Blob([srt], { type: 'text/plain' });
@@ -190,25 +232,23 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           ) : (
             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>Nessun video collegato</div>
           )}
-          {/* Overlay sottotitoli sul video */}
-          {segments[activeIdx] && (
+          {/* Overlay sottotitoli sincronizzati al video */}
+          {currentSubtitle && (
             <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 16px' }}>
-              {translations[segments[activeIdx].id]?.translated && (
-                <div style={{
-                  display: 'inline-block',
-                  background: 'rgba(0,0,0,0.75)',
-                  color: 'white',
-                  fontSize: 16,
-                  fontWeight: 'bold',
-                  padding: '6px 14px',
-                  borderRadius: 6,
-                  textShadow: '1px 1px 2px #000',
-                  maxWidth: '90%',
-                  lineHeight: 1.4,
-                }}>
-                  {translations[segments[activeIdx].id].translated}
-                </div>
-              )}
+              <div style={{
+                display: 'inline-block',
+                background: 'rgba(0,0,0,0.78)',
+                color: 'white',
+                fontSize: 16,
+                fontWeight: 'bold',
+                padding: '6px 14px',
+                borderRadius: 6,
+                textShadow: '1px 1px 2px #000',
+                maxWidth: '90%',
+                lineHeight: 1.4,
+              }}>
+                {currentSubtitle}
+              </div>
             </div>
           )}
         </div>
@@ -252,6 +292,30 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                     autoFocus
                     onClick={e => e.stopPropagation()}
                   />
+                  {/* Modifica timing */}
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 30 }}>IN</span>
+                    <input
+                      className="segment-input"
+                      style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
+                      value={editTiming.start ?? t?.timingStart ?? seg.start}
+                      onChange={e => setEditTiming(p => ({ ...p, start: e.target.value }))}
+                      placeholder="0:00:00.00"
+                    />
+                    <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 30 }}>OUT</span>
+                    <input
+                      className="segment-input"
+                      style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
+                      value={editTiming.end ?? t?.timingEnd ?? seg.end}
+                      onChange={e => setEditTiming(p => ({ ...p, end: e.target.value }))}
+                      placeholder="0:00:00.00"
+                    />
+                    <button
+                      className="btn btn-sm btn-outline"
+                      style={{ fontSize: 11, padding: '4px 10px' }}
+                      onClick={() => saveTimingEdit(seg)}
+                    >💾</button>
+                  </div>
                 ) : (
                   t?.translated
                     ? <div className="segment-translated">🇮🇹 {t.translated}</div>

@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, addDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 
@@ -19,14 +19,16 @@ export const auth = getAuth(app);
 export const loginUser = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const logoutUser = () => signOut(auth);
 
-// Crea utente senza perdere la sessione admin
-export const createUser = async (email, password, adminEmail, adminPassword) => {
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  const newUid = cred.user.uid;
-  // Rientra come admin
-  await signOut(auth);
-  await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
-  return { uid: newUid };
+// Crea utente usando seconda istanza Firebase — non tocca la sessione admin
+export const createUser = async (email, password) => {
+  let secondApp;
+  try { secondApp = getApp('secondary'); }
+  catch { secondApp = initializeApp(firebaseConfig, 'secondary'); }
+  const secondAuth = getAuth(secondApp);
+  const cred = await createUserWithEmailAndPassword(secondAuth, email, password);
+  const uid = cred.user.uid;
+  await secondAuth.signOut();
+  return { uid };
 };
 
 // ── USERS ─────────────────────────────────────────────────────────────
@@ -60,7 +62,6 @@ export const getEpisodes = (seriesId, callback) => {
   const q = query(collection(db, 'episodes'), where('seriesId', '==', seriesId));
   return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.number - b.number)));
 };
-// Accetta sia (seriesId, epId, data) che (epId, data) per compatibilità
 export const updateEpisode = (seriesIdOrEpId, epIdOrData, data) => {
   const epId = data ? epIdOrData : seriesIdOrEpId;
   const epData = data ? data : epIdOrData;
@@ -73,7 +74,6 @@ export const deleteEpisode = (seriesIdOrEpId, epId) => {
 
 // ── TRANSLATIONS ──────────────────────────────────────────────────────
 export const saveSegment = (seriesIdOrEpId, epIdOrSegId, segIdOrData, dataOrUndef) => {
-  // Supporta sia (seriesId, epId, segId, data) che (epId, segId, data)
   let epId, segId, data;
   if (dataOrUndef !== undefined) {
     epId = epIdOrSegId; segId = segIdOrData; data = dataOrUndef;
