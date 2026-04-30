@@ -89,11 +89,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
-  // Sincronizza sottotitoli al video durante riproduzione libera
+  // Sincronizza sottotitoli al video SOLO durante riproduzione attiva
   useEffect(() => {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
     const onTimeUpdate = () => {
+      if (video.paused) return; // non sovrascrivere quando il video è in pausa
       const ct = video.currentTime;
       const activeSeg = segments.find(seg => ct >= seg.startSec && ct <= timeToSec(seg.end));
       if (activeSeg) {
@@ -242,12 +243,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                 <div className="segment-time">{t?.timingStart || seg.start} → {t?.timingEnd || seg.end}</div>
                 <div className="segment-original">{seg.original}</div>
                 {isActive ? (
-                  <div onClick={e => e.stopPropagation()}>
+                  <div>
                     <textarea
                       className="segment-input"
                       value={t?.translated || ''}
                       onChange={e => handleTranslationChange(e.target.value)}
                       onKeyDown={handleKeyDown}
+                      onClick={e => e.stopPropagation()}
                       placeholder="Scrivi la traduzione italiana..."
                       autoFocus
                     />
