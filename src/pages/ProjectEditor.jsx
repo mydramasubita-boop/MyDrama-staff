@@ -114,6 +114,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setActiveIdx(idx);
     setEditTiming({});
     const seg = segments[idx];
+    // Aggiorna subito il sottotitolo visibile
+    const t = translations[seg?.id];
+    setCurrentSubtitle(t?.translated || '');
     if (!videoRef.current || !seg) return;
     if (segmentEndRef.current) clearInterval(segmentEndRef.current);
     videoRef.current.currentTime = seg.startSec;
@@ -130,6 +133,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const handleTranslationChange = (val) => {
     const seg = segments[activeIdx];
     if (!seg) return;
+    setCurrentSubtitle(val); // aggiorna subito il sub a video mentre scrivi
     saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
   };
 
