@@ -304,8 +304,8 @@ function NewUserModal({ onClose }) {
     if (!form.name || !form.email || !form.password) return;
     setLoading(true); setError('');
     try {
-      const cred = await createUser(form.email, form.password);
-      await saveUserProfile(cred.user.uid, { name: form.name, email: form.email, role: form.role });
+      const { uid } = await createUser(form.email, form.password);
+      await saveUserProfile(uid, { name: form.name, email: form.email, role: form.role });
       onClose();
     } catch (e) { setError(e.message); }
     setLoading(false);

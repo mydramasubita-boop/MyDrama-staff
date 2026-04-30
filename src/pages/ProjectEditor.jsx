@@ -86,9 +86,22 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (episode.status === 'pending') updateEpisode(series.id, episode.id, { status: 'translating' });
   }, []);
 
+  const segmentEndRef = useRef(null);
+
   const handleSegmentClick = (idx) => {
     setActiveIdx(idx);
-    if (videoRef.current && segments[idx]) videoRef.current.currentTime = segments[idx].startSec;
+    const seg = segments[idx];
+    if (!videoRef.current || !seg) return;
+    videoRef.current.currentTime = seg.startSec;
+    videoRef.current.play();
+    // Ferma il video alla fine del segmento
+    if (segmentEndRef.current) clearInterval(segmentEndRef.current);
+    segmentEndRef.current = setInterval(() => {
+      if (videoRef.current && videoRef.current.currentTime >= seg.startSec + (timeToSec(seg.end) - seg.startSec)) {
+        videoRef.current.pause();
+        clearInterval(segmentEndRef.current);
+      }
+    }, 100);
   };
 
   const handleTranslationChange = (val) => {
@@ -97,24 +110,31 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     saveSegment(series.id, episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
   };
 
+  const goToSegment = (idx) => {
+    if (idx < 0 || idx >= segments.length) return;
+    setActiveIdx(idx);
+    const seg = segments[idx];
+    if (!videoRef.current || !seg) return;
+    if (segmentEndRef.current) clearInterval(segmentEndRef.current);
+    videoRef.current.currentTime = seg.startSec;
+    videoRef.current.play();
+    segmentEndRef.current = setInterval(() => {
+      if (videoRef.current && videoRef.current.currentTime >= timeToSec(seg.end)) {
+        videoRef.current.pause();
+        clearInterval(segmentEndRef.current);
+      }
+    }, 100);
+    setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === 'ArrowDown') {
       e.preventDefault();
-      const next = activeIdx + 1;
-      if (next < segments.length) {
-        setActiveIdx(next);
-        if (videoRef.current) videoRef.current.currentTime = segments[next].startSec;
-        setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
-      }
+      goToSegment(activeIdx + 1);
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const prev = activeIdx - 1;
-      if (prev >= 0) {
-        setActiveIdx(prev);
-        if (videoRef.current) videoRef.current.currentTime = segments[prev].startSec;
-        setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
-      }
+      goToSegment(activeIdx - 1);
     }
   };
 
@@ -219,7 +239,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             const t = translations[seg.id];
             const isActive = idx === activeIdx;
             return (
-              <div key={seg.id} ref={isActive ? activeSegRef : null} className={`segment-card ${isActive ? 'active' : ''}`} onClick={() => handleSegmentClick(idx)}>
+              <div key={seg.id} ref={isActive ? activeSegRef : null} className={`segment-card ${isActive ? 'active' : ''}`} onClick={() => goToSegment(idx)}>
                 <div className="segment-time">{seg.start} → {seg.end}</div>
                 <div className="segment-original">{seg.original}</div>
                 {isActive ? (
