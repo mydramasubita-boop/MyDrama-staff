@@ -62,9 +62,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState('');
   const [editTiming, setEditTiming] = useState({});
-  const [currentSubtitle, setCurrentSubtitle] = useState(''); // { start, end } per il segmento attivo
+  const [currentSubtitle, setCurrentSubtitle] = useState('');
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
+  const segmentEndRef = useRef(null);
 
   useEffect(() => {
     if (!episode.assUrl) return;
@@ -78,28 +79,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   }, [episode.assUrl]);
 
   useEffect(() => {
-    const unsub = getSegments(series.id, episode.id, setTranslations);
+    const unsub = getSegments(episode.id, setTranslations);
     return unsub;
-  }, [series.id, episode.id]);
+  }, [episode.id]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
+
+  useEffect(() => {
+    if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
+  }, []);
 
   // Sincronizza sottotitoli al video durante riproduzione libera
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || segments.length === 0) return;
     const onTimeUpdate = () => {
-      const currentTime = video.currentTime;
-      const activeSeg = segments.find(seg => {
-        const start = seg.startSec;
-        const end = timeToSec(seg.end);
-        return currentTime >= start && currentTime <= end;
-      });
+      const ct = video.currentTime;
+      const activeSeg = segments.find(seg => ct >= seg.startSec && ct <= timeToSec(seg.end));
       if (activeSeg) {
         const t = translations[activeSeg.id];
-        const sub = t?.translated || '';
-        setCurrentSubtitle(sub);
-        // Aggiorna anche il segmento attivo nella lista
+        setCurrentSubtitle(t?.translated || '');
         const idx = segments.indexOf(activeSeg);
         if (idx !== activeIdx) setActiveIdx(idx);
       } else {
@@ -108,39 +107,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     };
     video.addEventListener('timeupdate', onTimeUpdate);
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
-  }, [segments, translations, activeIdx]);
-
-  useEffect(() => {
-    if (episode.status === 'pending') updateEpisode(series.id, episode.id, { status: 'translating' });
-  }, []);
-
-  const segmentEndRef = useRef(null);
-
-  const handleSegmentClick = (idx) => {
-    setActiveIdx(idx);
-    const seg = segments[idx];
-    if (!videoRef.current || !seg) return;
-    videoRef.current.currentTime = seg.startSec;
-    videoRef.current.play();
-    // Ferma il video alla fine del segmento
-    if (segmentEndRef.current) clearInterval(segmentEndRef.current);
-    segmentEndRef.current = setInterval(() => {
-      if (videoRef.current && videoRef.current.currentTime >= seg.startSec + (timeToSec(seg.end) - seg.startSec)) {
-        videoRef.current.pause();
-        clearInterval(segmentEndRef.current);
-      }
-    }, 100);
-  };
-
-  const handleTranslationChange = (val) => {
-    const seg = segments[activeIdx];
-    if (!seg) return;
-    saveSegment(series.id, episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
-  };
+  }, [segments, translations]);
 
   const goToSegment = (idx) => {
     if (idx < 0 || idx >= segments.length) return;
     setActiveIdx(idx);
+    setEditTiming({});
     const seg = segments[idx];
     if (!videoRef.current || !seg) return;
     if (segmentEndRef.current) clearInterval(segmentEndRef.current);
@@ -155,15 +127,28 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
+  const handleTranslationChange = (val) => {
+    const seg = segments[activeIdx];
+    if (!seg) return;
+    saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
+  };
+
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      goToSegment(activeIdx + 1);
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      goToSegment(activeIdx - 1);
-    }
+    if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); goToSegment(activeIdx + 1); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); goToSegment(activeIdx - 1); }
+  };
+
+  const saveTimingEdit = (seg) => {
+    const t = editTiming;
+    if (!t.start && !t.end) return;
+    saveSegment(episode.id, seg.id, {
+      original: seg.original,
+      translated: translations[seg.id]?.translated || '',
+      timingStart: t.start || seg.start,
+      timingEnd: t.end || seg.end,
+      translatedBy: auth.currentUser?.uid,
+    });
+    setEditTiming({});
   };
 
   const sendNotification = async () => {
@@ -176,14 +161,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       const toEmail = isChecker ? recipient.email : auth.currentUser?.email;
       const toName = isChecker ? recipient.name : 'Admin';
       await emailjs.send(EMAILJS_SERVICE, templateId, {
-        to_email: toEmail,
-        to_name: toName,
-        from_name: profile.name,
-        project_title: series.title,
-        episode: episode.number,
-        app_url: APP_URL,
+        to_email: toEmail, to_name: toName, from_name: profile.name,
+        project_title: series.title, episode: episode.number, app_url: APP_URL,
       }, EMAILJS_PUBLIC_KEY);
-      await updateEpisode(series.id, episode.id, { status: isChecker ? 'translation_done' : 'check_done' });
+      await updateEpisode(episode.id, { status: isChecker ? 'translation_done' : 'check_done' });
       setSendResult('✅ Notifica inviata!');
       setTimeout(() => { setShowSendModal(false); setSendResult(''); }, 1500);
     } catch (e) {
@@ -192,27 +173,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setSending(false);
   };
 
-  const saveTimingEdit = (seg) => {
-    const t = editTiming;
-    if (!t.start || !t.end) return;
-    // Salva timing modificato su Firestore insieme alla traduzione
-    saveSegment(episode.id, seg.id, {
-      original: seg.original,
-      translated: translations[seg.id]?.translated || '',
-      timingStart: t.start,
-      timingEnd: t.end,
-      translatedBy: auth.currentUser?.uid,
-    });
-    setEditTiming({});
-  };
-
   const exportSRT = () => {
     let srt = '';
     segments.forEach((seg, i) => {
-      const t = translations[seg.id]?.translated || '';
+      const t = translations[seg.id];
+      const translated = t?.translated || '';
       const startSRT = (t?.timingStart || seg.start).replace('.', ',');
       const endSRT = (t?.timingEnd || seg.end || '').replace('.', ',');
-      srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t}\n\n`;
+      srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${translated}\n\n`;
     });
     const blob = new Blob([srt], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -232,25 +200,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           ) : (
             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>Nessun video collegato</div>
           )}
-          {/* Overlay sottotitoli sincronizzati al video */}
-          {currentSubtitle && (
+          {currentSubtitle ? (
             <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 16px' }}>
-              <div style={{
-                display: 'inline-block',
-                background: 'rgba(0,0,0,0.78)',
-                color: 'white',
-                fontSize: 16,
-                fontWeight: 'bold',
-                padding: '6px 14px',
-                borderRadius: 6,
-                textShadow: '1px 1px 2px #000',
-                maxWidth: '90%',
-                lineHeight: 1.4,
-              }}>
+              <div style={{ display: 'inline-block', background: 'rgba(0,0,0,0.78)', color: 'white', fontSize: 16, fontWeight: 'bold', padding: '6px 14px', borderRadius: 6, textShadow: '1px 1px 2px #000', maxWidth: '90%', lineHeight: 1.4 }}>
                 {currentSubtitle}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
         <div className="editor-player-info">
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4 }}>{series.title}</div>
@@ -259,7 +215,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-
         </div>
       </div>
 
@@ -280,41 +235,35 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             const isActive = idx === activeIdx;
             return (
               <div key={seg.id} ref={isActive ? activeSegRef : null} className={`segment-card ${isActive ? 'active' : ''}`} onClick={() => goToSegment(idx)}>
-                <div className="segment-time">{seg.start} → {seg.end}</div>
+                <div className="segment-time">{t?.timingStart || seg.start} → {t?.timingEnd || seg.end}</div>
                 <div className="segment-original">{seg.original}</div>
                 {isActive ? (
-                  <textarea
-                    className="segment-input"
-                    value={t?.translated || ''}
-                    onChange={e => handleTranslationChange(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Scrivi la traduzione italiana..."
-                    autoFocus
-                    onClick={e => e.stopPropagation()}
-                  />
-                  {/* Modifica timing */}
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                    <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 30 }}>IN</span>
-                    <input
+                  <div onClick={e => e.stopPropagation()}>
+                    <textarea
                       className="segment-input"
-                      style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
-                      value={editTiming.start ?? t?.timingStart ?? seg.start}
-                      onChange={e => setEditTiming(p => ({ ...p, start: e.target.value }))}
-                      placeholder="0:00:00.00"
+                      value={t?.translated || ''}
+                      onChange={e => handleTranslationChange(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Scrivi la traduzione italiana..."
+                      autoFocus
                     />
-                    <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 30 }}>OUT</span>
-                    <input
-                      className="segment-input"
-                      style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
-                      value={editTiming.end ?? t?.timingEnd ?? seg.end}
-                      onChange={e => setEditTiming(p => ({ ...p, end: e.target.value }))}
-                      placeholder="0:00:00.00"
-                    />
-                    <button
-                      className="btn btn-sm btn-outline"
-                      style={{ fontSize: 11, padding: '4px 10px' }}
-                      onClick={() => saveTimingEdit(seg)}
-                    >💾</button>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 24 }}>IN</span>
+                      <input
+                        className="segment-input"
+                        style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
+                        value={editTiming.start !== undefined ? editTiming.start : (t?.timingStart || seg.start)}
+                        onChange={e => setEditTiming(p => ({ ...p, start: e.target.value }))}
+                      />
+                      <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 28 }}>OUT</span>
+                      <input
+                        className="segment-input"
+                        style={{ minHeight: 'auto', padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', flex: 1 }}
+                        value={editTiming.end !== undefined ? editTiming.end : (t?.timingEnd || seg.end)}
+                        onChange={e => setEditTiming(p => ({ ...p, end: e.target.value }))}
+                      />
+                      <button className="btn btn-sm btn-outline" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => saveTimingEdit(seg)}>💾</button>
+                    </div>
                   </div>
                 ) : (
                   t?.translated
