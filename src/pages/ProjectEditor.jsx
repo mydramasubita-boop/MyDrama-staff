@@ -89,22 +89,28 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
-  // Sincronizza sottotitoli al video SOLO durante riproduzione attiva
+  // Sincronizza sottotitoli al video durante riproduzione libera (non interferisce con il click)
   useEffect(() => {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
     const onTimeUpdate = () => {
-      if (video.paused) return; // non sovrascrivere quando il video è in pausa
+      if (video.paused) return;
       const ct = video.currentTime;
-      const activeSeg = segments.find(seg => ct >= seg.startSec && ct <= timeToSec(seg.end));
-      if (activeSeg) {
-        const t = translations[activeSeg.id];
-        setCurrentSubtitle(t?.translated || '');
-        const idx = segments.indexOf(activeSeg);
-        if (idx !== activeIdx) setActiveIdx(idx);
-      } else {
-        setCurrentSubtitle('');
+      // Cerca il segmento corrispondente al tempo corrente
+      let found = false;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const start = seg.startSec;
+        const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
+        if (ct >= start && ct <= end) {
+          const t = translations[seg.id];
+          setCurrentSubtitle(t?.translated || '');
+          setActiveIdx(i);
+          found = true;
+          break;
+        }
       }
+      if (!found) setCurrentSubtitle('');
     };
     video.addEventListener('timeupdate', onTimeUpdate);
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
@@ -115,19 +121,25 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setActiveIdx(idx);
     setEditTiming({});
     const seg = segments[idx];
-    // Aggiorna subito il sottotitolo visibile
     const t = translations[seg?.id];
+    // Aggiorna subito il sub visibile
     setCurrentSubtitle(t?.translated || '');
     if (!videoRef.current || !seg) return;
     if (segmentEndRef.current) clearInterval(segmentEndRef.current);
+    // Posiziona il video senza farlo partire automaticamente
     videoRef.current.currentTime = seg.startSec;
-    videoRef.current.play();
-    segmentEndRef.current = setInterval(() => {
-      if (videoRef.current && videoRef.current.currentTime >= timeToSec(seg.end)) {
-        videoRef.current.pause();
-        clearInterval(segmentEndRef.current);
-      }
-    }, 100);
+    // Fai partire e ferma alla fine del segmento
+    videoRef.current.play().then(() => {
+      segmentEndRef.current = setInterval(() => {
+        if (videoRef.current && videoRef.current.currentTime >= timeToSec(translations[seg.id]?.timingEnd || seg.end)) {
+          videoRef.current.pause();
+          // Ripristina il sub del segmento dopo la pausa
+          const tr = translations[seg.id];
+          setCurrentSubtitle(tr?.translated || '');
+          clearInterval(segmentEndRef.current);
+        }
+      }, 50);
+    }).catch(() => {});
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
