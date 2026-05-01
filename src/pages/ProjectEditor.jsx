@@ -81,6 +81,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [darkMode, setDarkMode] = useState(true);
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
+  const [localText, setLocalText] = useState(''); // testo locale senza Firebase ad ogni tasto
+  const saveTimeout = useRef(null);
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
@@ -109,9 +111,16 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   // Carica traduzioni da Firebase
   useEffect(() => {
-    const unsub = getSegments(episode.id, setTranslations);
+    const unsub = getSegments(episode.id, (data) => {
+      setTranslations(data);
+      // Aggiorna localText solo se non stiamo scrivendo
+      if (!saveTimeout.current) {
+        const seg = segments[activeIdx];
+        if (seg && data[seg.id]?.translated !== undefined) setLocalText(data[seg.id].translated);
+      }
+    });
     return unsub;
-  }, [episode.id]);
+  }, [episode.id, activeIdx, segments]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
   useEffect(() => {
@@ -208,6 +217,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const seg = segments[idx];
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
+    setLocalText(t?.translated || '');
     setCurrentSubtitles(t?.translated ? [t.translated] : []);
     playSegment(seg);
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
@@ -216,13 +226,31 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const handleTranslationChange = (val) => {
     const seg = segments[activeIdx];
     if (!seg) return;
+    setLocalText(val);
     setCurrentSubtitles(val ? [val] : []);
-    saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
+    // Salva su Firebase con debounce di 600ms — non ad ogni tasto
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+    saveTimeout.current = setTimeout(() => {
+      saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
+    }, 600);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); selectSegment(activeIdx + 1); }
-    if (e.key === 'ArrowUp') { e.preventDefault(); selectSegment(activeIdx - 1); }
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      // Salva subito prima di cambiare segmento
+      if (saveTimeout.current) { clearTimeout(saveTimeout.current); }
+      const seg = segments[activeIdx];
+      if (seg && localText !== undefined) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, translatedBy: auth.currentUser?.uid });
+      selectSegment(activeIdx + 1);
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (saveTimeout.current) { clearTimeout(saveTimeout.current); }
+      const seg = segments[activeIdx];
+      if (seg && localText !== undefined) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, translatedBy: auth.currentUser?.uid });
+      selectSegment(activeIdx - 1);
+    }
   };
 
   const saveTimingEdit = (seg) => {
@@ -354,7 +382,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   <div>
                     <textarea
                       style={{ width: '100%', padding: '10px 12px', background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 8, color: theme.text, fontFamily: 'var(--font-body)', fontSize: fontSize, outline: 'none', resize: 'vertical', minHeight: 60, lineHeight: 1.5 }}
-                      value={t?.translated || ''}
+                      value={localText}
                       onChange={e => handleTranslationChange(e.target.value)}
                       onKeyDown={handleKeyDown}
                       onClick={e => e.stopPropagation()}
