@@ -85,6 +85,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
   const segPlayInterval = useRef(null);
+  const isSegmentPlaying = useRef(false); // true durante autoplay segmento — blocca timeupdate
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -165,7 +166,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
     const onTimeUpdate = () => {
-      if (!isFreePlaying.current) return;
+      if (!isFreePlaying.current || isSegmentPlaying.current) return;
       const ct = video.currentTime;
       const active = segments.filter(seg => {
         const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
@@ -183,6 +184,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (!videoRef.current || !seg) return;
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
+    isSegmentPlaying.current = true;
     videoRef.current.currentTime = seg.startSec;
     videoRef.current.play();
     const endSec = timeToSec(translations[seg.id]?.timingEnd || seg.end);
@@ -191,6 +193,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         videoRef.current.pause();
         clearInterval(segPlayInterval.current);
         isFreePlaying.current = false;
+        isSegmentPlaying.current = false;
       }
     }, 50);
   };
@@ -206,6 +209,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
     setCurrentSubtitles(t?.translated ? [t.translated] : []);
+    playSegment(seg);
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
