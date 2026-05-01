@@ -213,7 +213,8 @@ function NewSeriesModal({ users, onClose }) {
         {form.isFilm && (
           <>
             <div className="form-row"><label className="label">Link video raw</label><input className="input-field" placeholder="https://..." value={epForm.videoUrl} onChange={e => setEpForm(f => ({ ...f, videoUrl: e.target.value }))} /></div>
-            <div className="form-row"><label className="label">Link file .ass</label><input className="input-field" placeholder="https://..." value={epForm.assUrl} onChange={e => setEpForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+            <div className="form-row"><label className="label">Link file .ass originale (da tradurre)</label><input className="input-field" placeholder="https://..." value={epForm.assUrl} onChange={e => setEpForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+            <div className="form-row"><label className="label">Link file .ass italiano (già tradotto — opzionale)</label><input className="input-field" placeholder="https://..." value={epForm.assItUrl || ''} onChange={e => setEpForm(f => ({ ...f, assItUrl: e.target.value }))} /></div>
           </>
         )}
         <div className="form-row">
@@ -255,7 +256,8 @@ function EpisodeModal({ seriesId, episode, onClose }) {
         <div className="form-row"><label className="label">Numero episodio</label><input className="input-field" type="number" value={form.number} onChange={e => setForm(f => ({ ...f, number: parseInt(e.target.value) || '' }))} /></div>
         <div className="form-row"><label className="label">Titolo episodio (opzionale)</label><input className="input-field" placeholder="es. Il primo incontro" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
         <div className="form-row"><label className="label">Link video raw</label><input className="input-field" placeholder="https://..." value={form.videoUrl} onChange={e => setForm(f => ({ ...f, videoUrl: e.target.value }))} /></div>
-        <div className="form-row"><label className="label">Link file .ass</label><input className="input-field" placeholder="https://..." value={form.assUrl} onChange={e => setForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Link file .ass originale (da tradurre)</label><input className="input-field" placeholder="https://..." value={form.assUrl} onChange={e => setForm(f => ({ ...f, assUrl: e.target.value }))} /></div>
+        <div className="form-row"><label className="label">Link file .ass italiano (già tradotto — opzionale, per check)</label><input className="input-field" placeholder="https://..." value={form.assItUrl || ''} onChange={e => setForm(f => ({ ...f, assItUrl: e.target.value }))} /></div>
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onClose}>Annulla</button>
           <button className="btn btn-grad" onClick={handleSubmit} disabled={loading}>{loading ? 'Salvataggio...' : 'Salva'}</button>

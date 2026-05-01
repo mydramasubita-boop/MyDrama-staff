@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveSegment, getSegments, updateEpisode, getAllUsers } from '../firebase.js';
 import { auth } from '../firebase.js';
 import emailjs from 'emailjs-com';
@@ -51,7 +51,6 @@ function timeToSec(t) {
   return 0;
 }
 
-// Converte tag ASS in HTML per visualizzazione
 function assToHtml(text) {
   if (!text) return '';
   return text
@@ -78,14 +77,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState('');
   const [editTiming, setEditTiming] = useState({});
-  const [currentSubtitles, setCurrentSubtitles] = useState([]); // array per righe sovrapposte
+  const [currentSubtitles, setCurrentSubtitles] = useState([]);
   const [darkMode, setDarkMode] = useState(true);
-  const [fontSize, setFontSize] = useState(14); // font size pannello traduzione
+  const [fontSize, setFontSize] = useState(14);
+  const [loadingIt, setLoadingIt] = useState(false);
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
+  const segPlayInterval = useRef(null);
 
-  // Colori tema
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
     border: 'rgba(255,20,147,0.2)', inputBg: '#0f0f1a', segBg: '#161625',
@@ -94,6 +94,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     border: 'rgba(139,0,139,0.25)', inputBg: '#ffffff', segBg: '#f8f8fc',
   };
 
+  // Carica segmenti originali
   useEffect(() => {
     if (!episode.assUrl) return;
     fetch(episode.assUrl)
@@ -105,17 +106,50 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       .catch(() => setSegments([]));
   }, [episode.assUrl]);
 
+  // Carica traduzioni da Firebase
   useEffect(() => {
     const unsub = getSegments(episode.id, setTranslations);
     return unsub;
   }, [episode.id]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
-
   useEffect(() => {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
+  // Importa file .ass italiano e pre-popola traduzioni
+  const importItalianASS = useCallback(async (segs) => {
+    if (!episode.assItUrl || !segs.length) return;
+    setLoadingIt(true);
+    try {
+      const res = await fetch(episode.assItUrl);
+      const text = await res.text();
+      const itSegs = episode.assItUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
+      // Abbina per indice
+      for (let i = 0; i < Math.min(segs.length, itSegs.length); i++) {
+        const orig = segs[i];
+        const it = itSegs[i];
+        if (it.original) {
+          await saveSegment(episode.id, orig.id, {
+            original: orig.original,
+            translated: it.original,
+            translatedBy: 'import',
+          });
+        }
+      }
+    } catch (e) { console.error('Import IT failed', e); }
+    setLoadingIt(false);
+  }, [episode.assItUrl, episode.id]);
+
+  // Dopo caricamento segmenti, importa se non ci sono traduzioni
+  useEffect(() => {
+    if (segments.length > 0 && episode.assItUrl) {
+      const hasTranslations = Object.keys(translations).length > 0;
+      if (!hasTranslations) importItalianASS(segments);
+    }
+  }, [segments, episode.assItUrl]);
+
+  // Play/pause tracking
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -126,7 +160,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => { video.removeEventListener('play', onPlay); video.removeEventListener('pause', onPause); };
   }, []);
 
-  // Sincronizza sub al video — supporta righe sovrapposte
+  // Sincronizza sub al video durante riproduzione libera
   useEffect(() => {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
@@ -138,17 +172,32 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         return ct >= seg.startSec && ct <= end;
       });
       setCurrentSubtitles(active.map(seg => translations[seg.id]?.translated || '').filter(Boolean));
-      if (active.length > 0) {
-        const idx = segments.indexOf(active[active.length - 1]);
-        setActiveIdx(idx);
-      }
+      if (active.length > 0) setActiveIdx(segments.indexOf(active[active.length - 1]));
     };
     video.addEventListener('timeupdate', onTimeUpdate);
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
   }, [segments, translations]);
 
+  // Riproduce solo il segmento corrente e si ferma
+  const playSegment = (seg) => {
+    if (!videoRef.current || !seg) return;
+    if (segPlayInterval.current) clearInterval(segPlayInterval.current);
+    isFreePlaying.current = false;
+    videoRef.current.currentTime = seg.startSec;
+    videoRef.current.play();
+    const endSec = timeToSec(translations[seg.id]?.timingEnd || seg.end);
+    segPlayInterval.current = setInterval(() => {
+      if (videoRef.current && videoRef.current.currentTime >= endSec) {
+        videoRef.current.pause();
+        clearInterval(segPlayInterval.current);
+        isFreePlaying.current = false;
+      }
+    }, 50);
+  };
+
   const selectSegment = (idx) => {
     if (idx < 0 || idx >= segments.length) return;
+    if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
     if (videoRef.current) videoRef.current.pause();
     setActiveIdx(idx);
@@ -157,6 +206,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
     setCurrentSubtitles(t?.translated ? [t.translated] : []);
+    // Autoplay del segmento quando selezionato
+    playSegment(seg);
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
@@ -213,13 +264,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     });
     const blob = new Blob([srt], { type: 'text/plain' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${series.title}_ep${episode.number}_IT.srt`;
-    a.click();
+    a.href = URL.createObjectURL(blob); a.download = `${series.title}_ep${episode.number}_IT.srt`; a.click();
   };
 
   const completedCount = segments.filter(s => translations[s.id]?.translated?.trim()).length;
   const progress = segments.length > 0 ? Math.round((completedCount / segments.length) * 100) : 0;
+  const activeSeg = segments[activeIdx];
 
   return (
     <div className="editor-layout" style={{ background: theme.bg }}>
@@ -231,7 +281,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           ) : (
             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>Nessun video collegato</div>
           )}
-          {/* Overlay sottotitoli — supporta righe sovrapposte */}
           {currentSubtitles.length > 0 && (
             <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               {currentSubtitles.map((sub, i) => (
@@ -242,13 +291,25 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             </div>
           )}
         </div>
-        <div className="editor-player-info" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
+        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
+          {/* Pulsante riproduzione segmento */}
+          {activeSeg && (
+            <button className="btn btn-sm btn-outline" style={{ marginBottom: 12, width: '100%' }} onClick={() => playSegment(activeSeg)}>
+              ▶ Riproduci solo questo segmento
+            </button>
+          )}
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 8 }}>{completedCount}/{segments.length} tradotti ({progress}%)</div>
-          <div style={{ height: 4, background: darkMode ? 'var(--bg3)' : '#ddd', borderRadius: 2 }}>
+          <div style={{ height: 4, background: darkMode ? '#0f0f1a' : '#ddd', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
+          {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
+          {episode.assItUrl && !loadingIt && (
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
+              🔄 Reimporta file .ass italiano
+            </button>
+          )}
         </div>
       </div>
 
@@ -257,14 +318,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={onBack}>← Torna ai progetti</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* Font size */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px', fontSize: 14 }} onClick={() => setFontSize(f => Math.max(10, f - 1))}>A−</button>
+              <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.max(10, f - 1))}>A−</button>
               <span style={{ fontSize: 11, color: theme.text2 }}>{fontSize}px</span>
-              <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px', fontSize: 14 }} onClick={() => setFontSize(f => Math.min(24, f + 1))}>A+</button>
+              <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.min(24, f + 1))}>A+</button>
             </div>
-            {/* Dark/Light mode */}
-            <button className="btn btn-sm btn-outline" onClick={() => setDarkMode(d => !d)} style={{ fontSize: 16 }}>
+            <button className="btn btn-sm btn-outline" style={{ fontSize: 16 }} onClick={() => setDarkMode(d => !d)}>
               {darkMode ? '☀️' : '🌙'}
             </button>
           </div>
@@ -273,7 +332,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="segments-list" style={{ background: theme.bg }}>
           {segments.length === 0 && (
             <div style={{ padding: 40, textAlign: 'center', color: theme.text2 }}>
-              {episode.assUrl ? 'Caricamento file in corso...' : 'Nessun file .ass/.srt collegato.'}
+              {episode.assUrl ? 'Caricamento...' : 'Nessun file .ass/.srt collegato.'}
             </div>
           )}
           {segments.map((seg, idx) => {
@@ -281,11 +340,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             const isActive = idx === activeIdx;
             return (
               <div key={seg.id} ref={isActive ? activeSegRef : null}
-                style={{
-                  background: isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg,
-                  border: `1px solid ${isActive ? 'var(--primary)' : theme.border}`,
-                  borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8,
-                }}
+                style={{ background: isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg, border: `1px solid ${isActive ? 'var(--primary)' : theme.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8 }}
                 onClick={() => selectSegment(idx)}>
                 <div style={{ fontFamily: 'monospace', fontSize: fontSize - 2, color: 'var(--primary)', marginBottom: 8 }}>
                   {t?.timingStart || seg.start} → {t?.timingEnd || seg.end}
@@ -327,15 +382,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         </div>
 
         <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
-          <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>
-            ✉️ Traduzione completata → Invia al checker
-          </button>
-          <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>
-            ✅ Check completato → Invia per encoding
-          </button>
-          {segments.length > 0 && (
-            <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>
-          )}
+          <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>✉️ Traduzione completata → Invia al checker</button>
+          <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>✅ Check completato → Invia per encoding</button>
+          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>}
         </div>
       </div>
 
@@ -344,27 +393,21 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-title">{sendType === 'checker' ? '✉️ Invia al checker' : '✅ Invia per encoding'}</div>
             <p style={{ color: 'var(--text2)', fontSize: 14, marginBottom: 20 }}>
-              {sendType === 'checker'
-                ? `La traduzione di ${series.title} Ep.${episode.number} verrà segnalata come completata.`
-                : `Il check di ${series.title} Ep.${episode.number} verrà segnalato come completato.`}
+              {sendType === 'checker' ? `La traduzione di ${series.title} Ep.${episode.number} verrà segnalata come completata.` : `Il check di ${series.title} Ep.${episode.number} verrà segnalato come completato.`}
             </p>
             {sendType === 'checker' && (
               <div className="form-row">
                 <label className="label">Seleziona checker</label>
                 <select className="input-field" value={sendTo} onChange={e => setSendTo(e.target.value)}>
                   <option value="">-- Seleziona --</option>
-                  {users.filter(u => u.id !== auth.currentUser?.uid).map(u => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
-                  ))}
+                  {users.filter(u => u.id !== auth.currentUser?.uid).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
             )}
             {sendResult && <div style={{ marginTop: 12, textAlign: 'center', fontSize: 14 }}>{sendResult}</div>}
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setShowSendModal(false)}>Annulla</button>
-              <button className="btn btn-grad" onClick={sendNotification} disabled={sending || (sendType === 'checker' && !sendTo)}>
-                {sending ? 'Invio...' : 'Invia notifica'}
-              </button>
+              <button className="btn btn-grad" onClick={sendNotification} disabled={sending || (sendType === 'checker' && !sendTo)}>{sending ? 'Invio...' : 'Invia notifica'}</button>
             </div>
           </div>
         </div>
