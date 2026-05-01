@@ -206,8 +206,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
     setCurrentSubtitles(t?.translated ? [t.translated] : []);
-    // Autoplay del segmento quando selezionato
-    playSegment(seg);
     setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
