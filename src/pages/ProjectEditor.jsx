@@ -25,7 +25,7 @@ function parseASS(text) {
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').trim();
-      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start) });
+      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start), style: obj.Style || 'Default' });
     }
   }
   return segments;
@@ -137,7 +137,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       const res = await fetch(episode.assItUrl);
       const text = await res.text();
       const itSegs = episode.assItUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
-      // Abbina per indice
       for (let i = 0; i < Math.min(segs.length, itSegs.length); i++) {
         const orig = segs[i];
         const it = itSegs[i];
@@ -145,19 +144,21 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           await saveSegment(episode.id, orig.id, {
             original: orig.original,
             translated: it.original,
+            style: it.style || 'Default',
             translatedBy: 'import',
           });
         }
       }
+      // Segna su Firestore che l'import è stato fatto — non verrà mai ripetuto
+      await updateEpisode(episode.id, { assItImported: true });
     } catch (e) { console.error('Import IT failed', e); }
     setLoadingIt(false);
   }, [episode.assItUrl, episode.id]);
 
-  // Dopo caricamento segmenti, importa se non ci sono traduzioni
+  // Dopo caricamento segmenti, importa SOLO se non è mai stato fatto prima
   useEffect(() => {
-    if (segments.length > 0 && episode.assItUrl) {
-      const hasTranslations = Object.keys(translations).length > 0;
-      if (!hasTranslations) importItalianASS(segments);
+    if (segments.length > 0 && episode.assItUrl && !episode.assItImported) {
+      importItalianASS(segments);
     }
   }, [segments, episode.assItUrl]);
 
