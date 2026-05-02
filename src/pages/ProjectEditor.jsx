@@ -314,8 +314,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const start = t.timingStart || seg.start;
       const end = t.timingEnd || seg.end || '';
       const style = t.style || 'Default';
-      const text = t.translated.replace(/
-/g, '\N');
+      const text = t.translated.replace(/\n/g, '\\N');
       dialogues += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}
 `;
     });
