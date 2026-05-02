@@ -8,7 +8,6 @@ const EMAILJS_PUBLIC_KEY = 'j2smuu518um43TmFj';
 const TEMPLATE_CHECKER = 'template_f0d6bhd';
 const TEMPLATE_ENCODING = 'template_enf305b';
 const APP_URL = 'https://mydramasubita-boop.github.io/MyDrama-staff/';
-
 const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
 
 function parseASS(text) {
@@ -83,13 +82,23 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [darkMode, setDarkMode] = useState(true);
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
-  const [localText, setLocalText] = useState(''); // testo locale senza Firebase ad ogni tasto
+  const [localText, setLocalText] = useState('');
+
   const saveTimeout = useRef(null);
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
   const segPlayInterval = useRef(null);
-  const isSegmentPlaying = useRef(false); // true durante autoplay segmento — blocca timeupdate
+  const isSegmentPlaying = useRef(false);
+  // Ref per accedere a activeIdx e segments dentro i callback senza dipendenze
+  const activeIdxRef = useRef(0);
+  const segmentsRef = useRef([]);
+  const saveTimeoutRef = useRef(null);
+
+  // Aggiorna i ref quando cambiano gli state
+  useEffect(() => { activeIdxRef.current = activeIdx; }, [activeIdx]);
+  useEffect(() => { segmentsRef.current = segments; }, [segments]);
+  useEffect(() => { saveTimeoutRef.current = saveTimeout.current; }, []);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -99,7 +108,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     border: 'rgba(139,0,139,0.25)', inputBg: '#ffffff', segBg: '#f8f8fc',
   };
 
-  // Carica segmenti originali
   useEffect(() => {
     if (!episode.assUrl) return;
     fetch(episode.assUrl)
@@ -111,25 +119,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       .catch(() => setSegments([]));
   }, [episode.assUrl]);
 
-  // Carica traduzioni da Firebase
+  // ✅ FIX: dipende SOLO da episode.id — non si ri-sottoscrive mai
   useEffect(() => {
     const unsub = getSegments(episode.id, (data) => {
       setTranslations(data);
-      // Aggiorna localText solo se non stiamo scrivendo
+      // Aggiorna localText solo se non stiamo scrivendo, usando i ref
       if (!saveTimeout.current) {
-        const seg = segments[activeIdx];
-        if (seg && data[seg.id]?.translated !== undefined) setLocalText(data[seg.id].translated);
+        const seg = segmentsRef.current[activeIdxRef.current];
+        if (seg && data[seg.id]?.translated !== undefined) {
+          setLocalText(data[seg.id].translated);
+        }
       }
     });
     return unsub;
-  }, [episode.id, activeIdx, segments]);
+  }, [episode.id]); // ← solo episode.id, nient'altro
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
   useEffect(() => {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
-  // Importa file .ass italiano e pre-popola traduzioni
   const importItalianASS = useCallback(async (segs) => {
     if (!episode.assItUrl || !segs.length) return;
     setLoadingIt(true);
@@ -149,20 +158,17 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           });
         }
       }
-      // Segna su Firestore che l'import è stato fatto — non verrà mai ripetuto
       await updateEpisode(episode.id, { assItImported: true });
     } catch (e) { console.error('Import IT failed', e); }
     setLoadingIt(false);
   }, [episode.assItUrl, episode.id]);
 
-  // Dopo caricamento segmenti, importa SOLO se non è mai stato fatto prima
   useEffect(() => {
     if (segments.length > 0 && episode.assItUrl && !episode.assItImported) {
       importItalianASS(segments);
     }
   }, [segments, episode.assItUrl]);
 
-  // Play/pause tracking
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -173,7 +179,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => { video.removeEventListener('play', onPlay); video.removeEventListener('pause', onPause); };
   }, []);
 
-  // Sincronizza sub al video durante riproduzione libera
   useEffect(() => {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
@@ -191,7 +196,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
   }, [segments, translations]);
 
-  // Riproduce solo il segmento corrente e si ferma
   const playSegment = (seg) => {
     if (!videoRef.current || !seg) return;
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
@@ -231,27 +235,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (!seg) return;
     setLocalText(val);
     setCurrentSubtitles(val ? [val] : []);
-    // Salva su Firebase con debounce di 600ms — non ad ogni tasto
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(() => {
       saveSegment(episode.id, seg.id, { original: seg.original, translated: val, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
+      saveTimeout.current = null;
     }, 600);
   };
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === 'ArrowDown') {
       e.preventDefault();
-      // Salva subito prima di cambiare segmento
-      if (saveTimeout.current) { clearTimeout(saveTimeout.current); }
+      if (saveTimeout.current) { clearTimeout(saveTimeout.current); saveTimeout.current = null; }
       const seg = segments[activeIdx];
-      if (seg && localText !== undefined) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, translatedBy: auth.currentUser?.uid });
+      if (seg) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
       selectSegment(activeIdx + 1);
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (saveTimeout.current) { clearTimeout(saveTimeout.current); }
+      if (saveTimeout.current) { clearTimeout(saveTimeout.current); saveTimeout.current = null; }
       const seg = segments[activeIdx];
-      if (seg && localText !== undefined) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, translatedBy: auth.currentUser?.uid });
+      if (seg) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
       selectSegment(activeIdx - 1);
     }
   };
@@ -263,6 +266,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       translated: translations[seg.id]?.translated || '',
       timingStart: editTiming.start || seg.start,
       timingEnd: editTiming.end || seg.end,
+      style: translations[seg.id]?.style || 'Default',
       translatedBy: auth.currentUser?.uid,
     });
     setEditTiming({});
@@ -288,26 +292,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const exportASS = () => {
-    const header = `[Script Info]
-ScriptType: v4.00+
-PlayResX: 1280
-PlayResY: 720
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Pensato,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Note,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Titolo,Arial,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: CARTELLI,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Musiche,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Attori,Arial,36,&H00AAAAAA,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-Style: Crediti,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Pensato,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Note,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Titolo,Arial,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: CARTELLI,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Musiche,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Attori,Arial,36,&H00AAAAAA,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Crediti,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
     let dialogues = '';
     segments.forEach(seg => {
       const t = translations[seg.id];
@@ -316,8 +301,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const end = t.timingEnd || seg.end || '';
       const style = t.style || 'Default';
       const text = t.translated.replace(/\n/g, '\\N');
-      dialogues += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}
-`;
+      dialogues += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}\n`;
     });
     const blob = new Blob([header + dialogues], { type: 'text/plain' });
     const a = document.createElement('a');
@@ -332,7 +316,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   return (
     <div className="editor-layout" style={{ background: theme.bg }}>
-      {/* ── PLAYER ── */}
       <div className="editor-player" style={{ background: theme.bg }}>
         <div style={{ position: 'relative', height: '55%', background: '#000' }}>
           {episode.videoUrl ? (
@@ -353,7 +336,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
-          {/* Pulsante riproduzione segmento */}
           {activeSeg && (
             <button className="btn btn-sm btn-outline" style={{ marginBottom: 12, width: '100%' }} onClick={() => playSegment(activeSeg)}>
               ▶ Riproduci solo questo segmento
@@ -363,7 +345,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           <div style={{ height: 4, background: darkMode ? '#0f0f1a' : '#ddd', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-          {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
+          {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione in corso...</div>}
           {episode.assItUrl && !loadingIt && (
             <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
               🔄 Reimporta file .ass italiano
@@ -372,7 +354,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         </div>
       </div>
 
-      {/* ── SEGMENTI ── */}
       <div className="editor-segments" style={{ background: theme.bg, borderLeft: `1px solid ${theme.border}` }}>
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={onBack}>← Torna ai progetti</button>
@@ -426,7 +407,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         onChange={e => {
                           saveSegment(episode.id, seg.id, {
                             original: seg.original,
-                            translated: translations[seg.id]?.translated || '',
+                            translated: localText,
                             style: e.target.value,
                             translatedBy: auth.currentUser?.uid,
                           });
