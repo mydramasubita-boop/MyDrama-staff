@@ -9,6 +9,8 @@ const TEMPLATE_CHECKER = 'template_f0d6bhd';
 const TEMPLATE_ENCODING = 'template_enf305b';
 const APP_URL = 'https://mydramasubita-boop.github.io/MyDrama-staff/';
 
+const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
+
 function parseASS(text) {
   const segments = [];
   const lines = text.split('\n');
@@ -231,7 +233,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     // Salva su Firebase con debounce di 600ms — non ad ogni tasto
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(() => {
-      saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
+      saveSegment(episode.id, seg.id, { original: seg.original, translated: val, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
     }, 600);
   };
 
@@ -284,17 +286,44 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setSending(false);
   };
 
-  const exportSRT = () => {
-    let srt = '';
-    segments.forEach((seg, i) => {
+  const exportASS = () => {
+    const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Pensato,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Note,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Titolo,Arial,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: CARTELLI,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Musiche,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Attori,Arial,36,&H00AAAAAA,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+Style: Crediti,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+    let dialogues = '';
+    segments.forEach(seg => {
       const t = translations[seg.id];
-      const startSRT = (t?.timingStart || seg.start).replace('.', ',');
-      const endSRT = (t?.timingEnd || seg.end || '').replace('.', ',');
-      srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t?.translated || ''}\n\n`;
+      if (!t?.translated?.trim()) return;
+      const start = t.timingStart || seg.start;
+      const end = t.timingEnd || seg.end || '';
+      const style = t.style || 'Default';
+      const text = t.translated.replace(/
+/g, '\N');
+      dialogues += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}
+`;
     });
-    const blob = new Blob([srt], { type: 'text/plain' });
+    const blob = new Blob([header + dialogues], { type: 'text/plain' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `${series.title}_ep${episode.number}_IT.srt`; a.click();
+    a.href = URL.createObjectURL(blob);
+    a.download = `${series.title}_ep${episode.number}_IT.ass`;
+    a.click();
   };
 
   const completedCount = segments.filter(s => translations[s.id]?.translated?.trim()).length;
@@ -389,7 +418,24 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                       placeholder="Scrivi la traduzione italiana..."
                       autoFocus
                     />
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                      <span style={{ fontSize: 10, color: theme.text2, minWidth: 36 }}>Stile</span>
+                      <select
+                        style={{ flex: 1, padding: '4px 8px', fontSize: 12, background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 6, color: theme.text, outline: 'none' }}
+                        value={translations[seg.id]?.style || 'Default'}
+                        onChange={e => {
+                          saveSegment(episode.id, seg.id, {
+                            original: seg.original,
+                            translated: translations[seg.id]?.translated || '',
+                            style: e.target.value,
+                            translatedBy: auth.currentUser?.uid,
+                          });
+                        }}
+                      >
+                        {ASS_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                       <span style={{ fontSize: 10, color: theme.text2, minWidth: 24 }}>IN</span>
                       <input style={{ flex: 1, padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none' }}
                         value={editTiming.start !== undefined ? editTiming.start : (t?.timingStart || seg.start)}
@@ -403,7 +449,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   </div>
                 ) : (
                   t?.translated
-                    ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>🇮🇹 <SubText text={t.translated} /></div>
+                    ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>
+                        <span style={{ fontSize: fontSize - 3, color: 'var(--primary)', fontFamily: 'monospace', marginRight: 6 }}>[{t.style || 'Default'}]</span>
+                        🇮🇹 <SubText text={t.translated} />
+                      </div>
                     : <div style={{ fontSize: fontSize - 2, color: 'rgba(128,128,128,0.4)', fontStyle: 'italic' }}>Non tradotto</div>
                 )}
               </div>
@@ -414,7 +463,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>✉️ Traduzione completata → Invia al checker</button>
           <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>✅ Check completato → Invia per encoding</button>
-          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>}
+          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportASS}>⬇️ Esporta .ass</button>}
         </div>
       </div>
 
