@@ -358,7 +358,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           </div>
           {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione in corso...</div>}
           {episode.assItUrl && !loadingIt && (
-            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={async () => {
+              await updateEpisode(episode.id, { assItImported: false });
+              importItalianASS(segments);
+            }}>
               🔄 Reimporta file .ass italiano
             </button>
           )}
