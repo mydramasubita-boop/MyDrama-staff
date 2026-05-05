@@ -20,7 +20,18 @@ function parseASS(text) {
       format = line.replace('Format:', '').split(',').map(s => s.trim()); continue;
     }
     if (inEvents && line.startsWith('Dialogue:')) {
-      const vals = line.replace('Dialogue:', '').split(',');
+      const raw = line.replace('Dialogue:', '').trimStart();
+      // Split solo sui primi (format.length - 1) campi — il resto è il testo (può contenere virgole)
+      const numFields = format.length;
+      const vals = [];
+      let remaining = raw;
+      for (let i = 0; i < numFields - 1; i++) {
+        const idx = remaining.indexOf(',');
+        if (idx === -1) { vals.push(remaining); remaining = ''; break; }
+        vals.push(remaining.substring(0, idx));
+        remaining = remaining.substring(idx + 1);
+      }
+      vals.push(remaining); // ultimo campo = testo completo con eventuali virgole
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').trim();
