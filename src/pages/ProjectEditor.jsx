@@ -81,10 +81,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [darkMode, setDarkMode] = useState(true);
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
+  const [localText, setLocalText] = useState('');
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
   const segPlayInterval = useRef(null);
+  const saveDebounceRef = useRef(null);
+  const pendingSaveRef = useRef(null);
+  const lastSyncedSegId = useRef(null);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -190,6 +194,33 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => clearTimeout(t);
   }, [activeIdx]);
 
+  // FIX cursore che salta: carica il testo nel box locale SOLO quando cambia
+  // effettivamente il segmento attivo (non ad ogni scrittura su Firestore).
+  // Prima il textarea leggeva il valore direttamente da `translations`, quindi
+  // ogni lettera digitata faceva un giro: salva su Firebase -> torna indietro
+  // -> il box si reimposta -> il cursore vola in fondo al testo.
+  useEffect(() => {
+    const seg = segments[activeIdx];
+    if (!seg) return;
+    if (lastSyncedSegId.current !== seg.id) {
+      setLocalText(translations[seg.id]?.translated || '');
+      lastSyncedSegId.current = seg.id;
+    }
+  }, [activeIdx, segments, translations]);
+
+  // Salva subito eventuali modifiche non ancora scritte (debounce in corso)
+  const flushPendingSave = () => {
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = null;
+    }
+    if (pendingSaveRef.current) {
+      const { segId, payload } = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      saveSegment(episode.id, segId, payload);
+    }
+  };
+
   // Riproduce solo il segmento corrente e si ferma
   const playSegment = (seg) => {
     if (!videoRef.current || !seg) return;
@@ -209,6 +240,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   const selectSegment = (idx) => {
     if (idx < 0 || idx >= segments.length) return;
+    flushPendingSave();
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
     if (videoRef.current) videoRef.current.pause();
@@ -226,8 +258,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const handleTranslationChange = (val) => {
     const seg = segments[activeIdx];
     if (!seg) return;
+    setLocalText(val);
     setCurrentSubtitles(val ? [val] : []);
-    saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
+    pendingSaveRef.current = {
+      segId: seg.id,
+      payload: { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid },
+    };
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+    saveDebounceRef.current = setTimeout(flushPendingSave, 600);
   };
 
   const handleKeyDown = (e) => {
@@ -248,6 +286,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const sendNotification = async () => {
+    flushPendingSave();
     const recipient = users.find(u => u.id === sendTo);
     if (!recipient && sendType === 'checker') return;
     setSending(true); setSendResult('');
@@ -328,7 +367,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       {/* ── SEGMENTI ── */}
       <div className="editor-segments" style={{ background: theme.bg, borderLeft: `1px solid ${theme.border}` }}>
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
-          <button className="btn btn-sm btn-outline" onClick={onBack}>← Torna ai progetti</button>
+          <button className="btn btn-sm btn-outline" onClick={() => { flushPendingSave(); onBack(); }}>← Torna ai progetti</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.max(10, f - 1))}>A−</button>
@@ -364,7 +403,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   <div>
                     <textarea
                       style={{ width: '100%', padding: '10px 12px', background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 8, color: theme.text, fontFamily: 'var(--font-body)', fontSize: fontSize, outline: 'none', resize: 'vertical', minHeight: 60, lineHeight: 1.5 }}
-                      value={t?.translated || ''}
+                      value={localText}
                       onChange={e => handleTranslationChange(e.target.value)}
                       onKeyDown={handleKeyDown}
                       onClick={e => e.stopPropagation()}
