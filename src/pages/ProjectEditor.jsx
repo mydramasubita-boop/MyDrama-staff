@@ -8,7 +8,6 @@ const EMAILJS_PUBLIC_KEY = 'j2smuu518um43TmFj';
 const TEMPLATE_CHECKER = 'template_f0d6bhd';
 const TEMPLATE_ENCODING = 'template_enf305b';
 const APP_URL = 'https://mydramasubita-boop.github.io/MyDrama-staff/';
-const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
 
 function parseASS(text) {
   const segments = [];
@@ -20,22 +19,11 @@ function parseASS(text) {
       format = line.replace('Format:', '').split(',').map(s => s.trim()); continue;
     }
     if (inEvents && line.startsWith('Dialogue:')) {
-      const raw = line.replace('Dialogue:', '').trimStart();
-      // Split solo sui primi (format.length - 1) campi — il resto è il testo (può contenere virgole)
-      const numFields = format.length;
-      const vals = [];
-      let remaining = raw;
-      for (let i = 0; i < numFields - 1; i++) {
-        const idx = remaining.indexOf(',');
-        if (idx === -1) { vals.push(remaining); remaining = ''; break; }
-        vals.push(remaining.substring(0, idx));
-        remaining = remaining.substring(idx + 1);
-      }
-      vals.push(remaining); // ultimo campo = testo completo con eventuali virgole
+      const vals = line.replace('Dialogue:', '').split(',');
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').trim();
-      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start), style: obj.Style || 'Default' });
+      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start) });
     }
   }
   return segments;
@@ -93,23 +81,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [darkMode, setDarkMode] = useState(true);
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
-  const [localText, setLocalText] = useState('');
-
-  const saveTimeout = useRef(null);
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
   const segPlayInterval = useRef(null);
-  const isSegmentPlaying = useRef(false);
-  // Ref per accedere a activeIdx e segments dentro i callback senza dipendenze
-  const activeIdxRef = useRef(0);
-  const segmentsRef = useRef([]);
-  const saveTimeoutRef = useRef(null);
-
-  // Aggiorna i ref quando cambiano gli state
-  useEffect(() => { activeIdxRef.current = activeIdx; }, [activeIdx]);
-  useEffect(() => { segmentsRef.current = segments; }, [segments]);
-  useEffect(() => { saveTimeoutRef.current = saveTimeout.current; }, []);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -119,6 +94,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     border: 'rgba(139,0,139,0.25)', inputBg: '#ffffff', segBg: '#f8f8fc',
   };
 
+  // Carica segmenti originali
   useEffect(() => {
     if (!episode.assUrl) return;
     fetch(episode.assUrl)
@@ -130,26 +106,18 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       .catch(() => setSegments([]));
   }, [episode.assUrl]);
 
-  // ✅ FIX: dipende SOLO da episode.id — non si ri-sottoscrive mai
+  // Carica traduzioni da Firebase
   useEffect(() => {
-    const unsub = getSegments(episode.id, (data) => {
-      setTranslations(data);
-      // Aggiorna localText solo se non stiamo scrivendo, usando i ref
-      if (!saveTimeout.current) {
-        const seg = segmentsRef.current[activeIdxRef.current];
-        if (seg && data[seg.id]?.translated !== undefined) {
-          setLocalText(data[seg.id].translated);
-        }
-      }
-    });
+    const unsub = getSegments(episode.id, setTranslations);
     return unsub;
-  }, [episode.id]); // ← solo episode.id, nient'altro
+  }, [episode.id]);
 
   useEffect(() => { getAllUsers().then(setUsers); }, []);
   useEffect(() => {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
+  // Importa file .ass italiano e pre-popola traduzioni
   const importItalianASS = useCallback(async (segs) => {
     if (!episode.assItUrl || !segs.length) return;
     setLoadingIt(true);
@@ -157,6 +125,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       const res = await fetch(episode.assItUrl);
       const text = await res.text();
       const itSegs = episode.assItUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
+      // Abbina per indice
       for (let i = 0; i < Math.min(segs.length, itSegs.length); i++) {
         const orig = segs[i];
         const it = itSegs[i];
@@ -164,22 +133,23 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           await saveSegment(episode.id, orig.id, {
             original: orig.original,
             translated: it.original,
-            style: it.style || 'Default',
             translatedBy: 'import',
           });
         }
       }
-      await updateEpisode(episode.id, { assItImported: true });
     } catch (e) { console.error('Import IT failed', e); }
     setLoadingIt(false);
   }, [episode.assItUrl, episode.id]);
 
+  // Dopo caricamento segmenti, importa se non ci sono traduzioni
   useEffect(() => {
-    if (segments.length > 0 && episode.assItUrl && !episode.assItImported) {
-      importItalianASS(segments);
+    if (segments.length > 0 && episode.assItUrl) {
+      const hasTranslations = Object.keys(translations).length > 0;
+      if (!hasTranslations) importItalianASS(segments);
     }
   }, [segments, episode.assItUrl]);
 
+  // Play/pause tracking
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -190,11 +160,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => { video.removeEventListener('play', onPlay); video.removeEventListener('pause', onPause); };
   }, []);
 
+  // Sincronizza sub al video durante riproduzione libera
   useEffect(() => {
     const video = videoRef.current;
     if (!video || segments.length === 0) return;
     const onTimeUpdate = () => {
-      if (!isFreePlaying.current || isSegmentPlaying.current) return;
+      if (!isFreePlaying.current) return;
       const ct = video.currentTime;
       const active = segments.filter(seg => {
         const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
@@ -207,11 +178,23 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
   }, [segments, translations]);
 
+  // FIX: segue automaticamente la riga attiva nel pannello laterale,
+  // sia quando la selezioni cliccando sia quando cambia da sola durante il play.
+  // Prima lo scroll partiva solo dentro selectSegment: durante la riproduzione
+  // libera l'activeIdx si aggiornava correttamente ma la lista non scrollava mai,
+  // quindi restava visibile l'ultima riga modificata anche se il video era andato avanti.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [activeIdx]);
+
+  // Riproduce solo il segmento corrente e si ferma
   const playSegment = (seg) => {
     if (!videoRef.current || !seg) return;
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
-    isSegmentPlaying.current = true;
     videoRef.current.currentTime = seg.startSec;
     videoRef.current.play();
     const endSec = timeToSec(translations[seg.id]?.timingEnd || seg.end);
@@ -220,7 +203,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         videoRef.current.pause();
         clearInterval(segPlayInterval.current);
         isFreePlaying.current = false;
-        isSegmentPlaying.current = false;
       }
     }, 50);
   };
@@ -235,39 +217,22 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const seg = segments[idx];
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
-    setLocalText(t?.translated || '');
     setCurrentSubtitles(t?.translated ? [t.translated] : []);
+    // Autoplay del segmento quando selezionato
     playSegment(seg);
-    setTimeout(() => activeSegRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    // Lo scroll ora è gestito dal useEffect su [activeIdx] sopra
   };
 
   const handleTranslationChange = (val) => {
     const seg = segments[activeIdx];
     if (!seg) return;
-    setLocalText(val);
     setCurrentSubtitles(val ? [val] : []);
-    if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => {
-      saveSegment(episode.id, seg.id, { original: seg.original, translated: val, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
-      saveTimeout.current = null;
-    }, 600);
+    saveSegment(episode.id, seg.id, { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid });
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (saveTimeout.current) { clearTimeout(saveTimeout.current); saveTimeout.current = null; }
-      const seg = segments[activeIdx];
-      if (seg) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
-      selectSegment(activeIdx + 1);
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (saveTimeout.current) { clearTimeout(saveTimeout.current); saveTimeout.current = null; }
-      const seg = segments[activeIdx];
-      if (seg) saveSegment(episode.id, seg.id, { original: seg.original, translated: localText, style: translations[seg.id]?.style || 'Default', translatedBy: auth.currentUser?.uid });
-      selectSegment(activeIdx - 1);
-    }
+    if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); selectSegment(activeIdx + 1); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); selectSegment(activeIdx - 1); }
   };
 
   const saveTimingEdit = (seg) => {
@@ -277,7 +242,6 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       translated: translations[seg.id]?.translated || '',
       timingStart: editTiming.start || seg.start,
       timingEnd: editTiming.end || seg.end,
-      style: translations[seg.id]?.style || 'Default',
       translatedBy: auth.currentUser?.uid,
     });
     setEditTiming({});
@@ -302,23 +266,17 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setSending(false);
   };
 
-  const exportASS = () => {
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Pensato,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Note,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Titolo,Arial,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: CARTELLI,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Musiche,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,1,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Attori,Arial,36,&H00AAAAAA,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\nStyle: Crediti,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
-    let dialogues = '';
-    segments.forEach(seg => {
+  const exportSRT = () => {
+    let srt = '';
+    segments.forEach((seg, i) => {
       const t = translations[seg.id];
-      if (!t?.translated?.trim()) return;
-      const start = t.timingStart || seg.start;
-      const end = t.timingEnd || seg.end || '';
-      const style = t.style || 'Default';
-      const text = t.translated.replace(/\n/g, '\\N');
-      dialogues += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}\n`;
+      const startSRT = (t?.timingStart || seg.start).replace('.', ',');
+      const endSRT = (t?.timingEnd || seg.end || '').replace('.', ',');
+      srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t?.translated || ''}\n\n`;
     });
-    const blob = new Blob([header + dialogues], { type: 'text/plain' });
+    const blob = new Blob([srt], { type: 'text/plain' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${series.title}_ep${episode.number}_IT.ass`;
-    a.click();
+    a.href = URL.createObjectURL(blob); a.download = `${series.title}_ep${episode.number}_IT.srt`; a.click();
   };
 
   const completedCount = segments.filter(s => translations[s.id]?.translated?.trim()).length;
@@ -327,6 +285,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   return (
     <div className="editor-layout" style={{ background: theme.bg }}>
+      {/* ── PLAYER ── */}
       <div className="editor-player" style={{ background: theme.bg }}>
         <div style={{ position: 'relative', height: '55%', background: '#000' }}>
           {episode.videoUrl ? (
@@ -347,6 +306,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
+          {/* Pulsante riproduzione segmento */}
           {activeSeg && (
             <button className="btn btn-sm btn-outline" style={{ marginBottom: 12, width: '100%' }} onClick={() => playSegment(activeSeg)}>
               ▶ Riproduci solo questo segmento
@@ -356,18 +316,16 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           <div style={{ height: 4, background: darkMode ? '#0f0f1a' : '#ddd', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-          {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione in corso...</div>}
+          {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
           {episode.assItUrl && !loadingIt && (
-            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={async () => {
-              await updateEpisode(episode.id, { assItImported: false });
-              importItalianASS(segments);
-            }}>
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
               🔄 Reimporta file .ass italiano
             </button>
           )}
         </div>
       </div>
 
+      {/* ── SEGMENTI ── */}
       <div className="editor-segments" style={{ background: theme.bg, borderLeft: `1px solid ${theme.border}` }}>
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={onBack}>← Torna ai progetti</button>
@@ -406,31 +364,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   <div>
                     <textarea
                       style={{ width: '100%', padding: '10px 12px', background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 8, color: theme.text, fontFamily: 'var(--font-body)', fontSize: fontSize, outline: 'none', resize: 'vertical', minHeight: 60, lineHeight: 1.5 }}
-                      value={localText}
+                      value={t?.translated || ''}
                       onChange={e => handleTranslationChange(e.target.value)}
                       onKeyDown={handleKeyDown}
                       onClick={e => e.stopPropagation()}
                       placeholder="Scrivi la traduzione italiana..."
                       autoFocus
                     />
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                      <span style={{ fontSize: 10, color: theme.text2, minWidth: 36 }}>Stile</span>
-                      <select
-                        style={{ flex: 1, padding: '4px 8px', fontSize: 12, background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 6, color: theme.text, outline: 'none' }}
-                        value={translations[seg.id]?.style || 'Default'}
-                        onChange={e => {
-                          saveSegment(episode.id, seg.id, {
-                            original: seg.original,
-                            translated: localText,
-                            style: e.target.value,
-                            translatedBy: auth.currentUser?.uid,
-                          });
-                        }}
-                      >
-                        {ASS_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                       <span style={{ fontSize: 10, color: theme.text2, minWidth: 24 }}>IN</span>
                       <input style={{ flex: 1, padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none' }}
                         value={editTiming.start !== undefined ? editTiming.start : (t?.timingStart || seg.start)}
@@ -444,10 +385,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   </div>
                 ) : (
                   t?.translated
-                    ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>
-                        <span style={{ fontSize: fontSize - 3, color: 'var(--primary)', fontFamily: 'monospace', marginRight: 6 }}>[{t.style || 'Default'}]</span>
-                        🇮🇹 <SubText text={t.translated} />
-                      </div>
+                    ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>🇮🇹 <SubText text={t.translated} /></div>
                     : <div style={{ fontSize: fontSize - 2, color: 'rgba(128,128,128,0.4)', fontStyle: 'italic' }}>Non tradotto</div>
                 )}
               </div>
@@ -458,7 +396,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>✉️ Traduzione completata → Invia al checker</button>
           <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>✅ Check completato → Invia per encoding</button>
-          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportASS}>⬇️ Esporta .ass</button>}
+          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>}
         </div>
       </div>
 
