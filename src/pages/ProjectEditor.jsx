@@ -64,6 +64,38 @@ function assToHtml(text) {
 
 const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
 
+const DEFAULT_ASS_HEADER = `[Script Info]
+Title: MyDramaStaff export
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.601
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+Style: Pensato,Arial,44,&H00CCCCCC,&H000000FF,&H00000000,&H64000000,0,1,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+Style: Note,Arial,36,&H0000CCFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,8,20,20,25,1
+Style: Titolo,Arial,60,&H0000D7FF,&H000000FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,2,5,20,20,25,1
+Style: CARTELLI,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+Style: Musiche,Arial,40,&H00FF66CC,&H000000FF,&H00000000,&H64000000,0,1,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+Style: Attori,Arial,44,&H0066CCFF,&H000000FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+Style: Crediti,Arial,36,&H00CCCCCC,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
+
+`;
+
+function secToASSTime(totalSec) {
+  if (totalSec == null || isNaN(totalSec) || totalSec < 0) totalSec = 0;
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = Math.floor(totalSec % 60);
+  const cs = Math.round((totalSec - Math.floor(totalSec)) * 100);
+  const pad2 = n => String(n).padStart(2, '0');
+  return `${h}:${pad2(m)}:${pad2(s)}.${pad2(cs)}`;
+}
+
 function SubText({ text }) {
   if (!text) return null;
   return <span dangerouslySetInnerHTML={{ __html: assToHtml(text) }} />;
@@ -71,6 +103,7 @@ function SubText({ text }) {
 
 export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [segments, setSegments] = useState([]);
+  const [assHeader, setAssHeader] = useState(null);
   const [translations, setTranslations] = useState({});
   const [activeIdx, setActiveIdx] = useState(0);
   const [users, setUsers] = useState([]);
@@ -104,11 +137,18 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // Carica segmenti originali
   useEffect(() => {
     if (!episode.assUrl) return;
+    const isASS = episode.assUrl.toLowerCase().includes('.ass');
     fetch(episode.assUrl)
       .then(r => r.text())
       .then(text => {
-        const segs = episode.assUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
+        const segs = isASS ? parseASS(text) : parseSRT(text);
         setSegments(segs);
+        if (isASS) {
+          const idx = text.indexOf('[Events]');
+          setAssHeader(idx > -1 ? text.slice(0, idx) : null);
+        } else {
+          setAssHeader(null);
+        }
       })
       .catch(() => setSegments([]));
   }, [episode.assUrl]);
@@ -330,6 +370,22 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     a.href = URL.createObjectURL(blob); a.download = `${series.title}_ep${episode.number}_IT.srt`; a.click();
   };
 
+  const exportASS = () => {
+    const header = assHeader || DEFAULT_ASS_HEADER;
+    let body = '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+    segments.forEach(seg => {
+      const t = translations[seg.id];
+      const text = (t?.translated || '').replace(/\r?\n/g, '\\N');
+      const start = secToASSTime(timeToSec(t?.timingStart || seg.start));
+      const end = secToASSTime(timeToSec(t?.timingEnd || seg.end));
+      const style = t?.style || seg.style || 'Default';
+      body += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}\n`;
+    });
+    const blob = new Blob([header + body], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `${series.title}_ep${episode.number}_IT.ass`; a.click();
+  };
+
   const completedCount = segments.filter(s => translations[s.id]?.translated?.trim()).length;
   const progress = segments.length > 0 ? Math.round((completedCount / segments.length) * 100) : 0;
   const activeSeg = segments[activeIdx];
@@ -463,6 +519,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>✉️ Traduzione completata → Invia al checker</button>
           <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>✅ Check completato → Invia per encoding</button>
+          {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportASS}>⬇️ Esporta .ass (con stili)</button>}
           {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportSRT}>⬇️ Esporta .srt</button>}
         </div>
       </div>
