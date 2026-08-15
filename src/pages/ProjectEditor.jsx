@@ -23,13 +23,14 @@ function parseASS(text) {
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').trim();
-      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start) });
+      if (txt) segments.push({ id: `${obj.Start}_${obj.End}_${segments.length}`, start: obj.Start, end: obj.End, original: txt, startSec: timeToSec(obj.Start), style: obj.Style?.trim() || 'Default' });
     }
   }
   return segments;
 }
 
-function parseSRT(text) {
+function parseSRT(rawText) {
+  const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const segments = [];
   const blocks = text.trim().split(/\n\n+/);
   for (const block of blocks) {
@@ -60,6 +61,8 @@ function assToHtml(text) {
     .replace(/\{\\s1\}/g, '<s>').replace(/\{\\s0\}/g, '</s>')
     .replace(/\\N/g, '<br>').replace(/\n/g, '<br>');
 }
+
+const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
 
 function SubText({ text }) {
   if (!text) return null;
@@ -285,6 +288,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setEditTiming({});
   };
 
+  const saveStyleEdit = (seg, newStyle) => {
+    saveSegment(episode.id, seg.id, {
+      original: seg.original,
+      translated: translations[seg.id]?.translated || '',
+      style: newStyle,
+      translatedBy: auth.currentUser?.uid,
+    });
+  };
+
   const sendNotification = async () => {
     flushPendingSave();
     const recipient = users.find(u => u.id === sendTo);
@@ -393,8 +405,24 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               <div key={seg.id} ref={isActive ? activeSegRef : null}
                 style={{ background: isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg, border: `1px solid ${isActive ? 'var(--primary)' : theme.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8 }}
                 onClick={() => selectSegment(idx)}>
-                <div style={{ fontFamily: 'monospace', fontSize: fontSize - 2, color: 'var(--primary)', marginBottom: 8 }}>
-                  {t?.timingStart || seg.start} → {t?.timingEnd || seg.end}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                  <div style={{ fontFamily: 'monospace', fontSize: fontSize - 2, color: 'var(--primary)' }}>
+                    {t?.timingStart || seg.start} → {t?.timingEnd || seg.end}
+                  </div>
+                  {isActive ? (
+                    <select
+                      value={t?.style || seg.style || 'Default'}
+                      onChange={e => saveStyleEdit(seg, e.target.value)}
+                      onClick={ev => ev.stopPropagation()}
+                      style={{ fontSize: 11, padding: '3px 6px', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none', cursor: 'pointer' }}
+                    >
+                      {[...new Set([...ASS_STYLES, seg.style || 'Default'])].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  ) : (
+                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: `1px solid ${theme.border}`, color: theme.text2, whiteSpace: 'nowrap' }}>
+                      {t?.style || seg.style || 'Default'}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: fontSize, color: theme.text2, marginBottom: 10, lineHeight: 1.5 }}>
                   <SubText text={seg.original} />
