@@ -536,7 +536,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                 <label className="label">Seleziona checker</label>
                 <select className="input-field" value={sendTo} onChange={e => setSendTo(e.target.value)}>
                   <option value="">-- Seleziona --</option>
-                  {users.filter(u => u.id !== auth.currentUser?.uid).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  {users.filter(u => u.id !== auth.currentUser?.uid && series.team?.includes(u.id)).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
             )}
