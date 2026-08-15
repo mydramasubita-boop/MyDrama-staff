@@ -77,7 +77,7 @@ PlayResY: 1080
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
 Style: Pensato,Arial,44,&H00CCCCCC,&H000000FF,&H00000000,&H64000000,0,1,0,0,100,100,0,0,1,2,1,2,20,20,25,1
-Style: Note,Arial,36,&H0000CCFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,8,20,20,25,1
+Style: Note,Arial,36,&H0000CCFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
 Style: Titolo,Arial,60,&H0000D7FF,&H000000FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,2,5,20,20,25,1
 Style: CARTELLI,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,25,1
 Style: Musiche,Arial,40,&H00FF66CC,&H000000FF,&H00000000,&H64000000,0,1,0,0,100,100,0,0,1,2,1,2,20,20,25,1
@@ -118,12 +118,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
   const [localText, setLocalText] = useState('');
+  const [localNote, setLocalNote] = useState('');
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
   const segPlayInterval = useRef(null);
   const saveDebounceRef = useRef(null);
   const pendingSaveRef = useRef(null);
+  const noteDebounceRef = useRef(null);
+  const pendingNoteRef = useRef(null);
   const lastSyncedSegId = useRef(null);
 
   const theme = darkMode ? {
@@ -247,6 +250,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (!seg) return;
     if (lastSyncedSegId.current !== seg.id) {
       setLocalText(translations[seg.id]?.translated || '');
+      setLocalNote(translations[seg.id]?.note || '');
       lastSyncedSegId.current = seg.id;
     }
   }, [activeIdx, segments, translations]);
@@ -262,6 +266,23 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       pendingSaveRef.current = null;
       saveSegment(episode.id, segId, payload);
     }
+  };
+
+  const flushPendingNote = () => {
+    if (noteDebounceRef.current) {
+      clearTimeout(noteDebounceRef.current);
+      noteDebounceRef.current = null;
+    }
+    if (pendingNoteRef.current) {
+      const { segId, note } = pendingNoteRef.current;
+      pendingNoteRef.current = null;
+      saveSegment(episode.id, segId, { note });
+    }
+  };
+
+  const flushAllPending = () => {
+    flushPendingSave();
+    flushPendingNote();
   };
 
   // Riproduce solo il segmento corrente e si ferma
@@ -283,7 +304,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   const selectSegment = (idx) => {
     if (idx < 0 || idx >= segments.length) return;
-    flushPendingSave();
+    flushAllPending();
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
     if (videoRef.current) videoRef.current.pause();
@@ -309,6 +330,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     };
     if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
     saveDebounceRef.current = setTimeout(flushPendingSave, 600);
+  };
+
+  const handleNoteChange = (val) => {
+    const seg = segments[activeIdx];
+    if (!seg) return;
+    setLocalNote(val);
+    pendingNoteRef.current = { segId: seg.id, note: val };
+    if (noteDebounceRef.current) clearTimeout(noteDebounceRef.current);
+    noteDebounceRef.current = setTimeout(flushPendingNote, 600);
   };
 
   const handleKeyDown = (e) => {
@@ -338,7 +368,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const sendNotification = async () => {
-    flushPendingSave();
+    flushAllPending();
     const recipient = users.find(u => u.id === sendTo);
     if (!recipient && sendType === 'checker') return;
     setSending(true); setSendResult('');
@@ -379,6 +409,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       const start = secToASSTime(timeToSec(t?.timingStart || seg.start));
       const end = secToASSTime(timeToSec(t?.timingEnd || seg.end));
       const style = t?.style || seg.style || 'Default';
+      // La nota va scritta PRIMA della riga principale, con lo stesso timing:
+      // a parita' di stile/allineamento il renderer ASS impila per ordine di
+      // dichiarazione, e la riga dichiarata prima resta nella posizione bassa.
+      if (t?.note?.trim()) {
+        const noteText = `[N.d.T.: ${t.note.trim()}]`.replace(/\r?\n/g, '\\N');
+        body += `Dialogue: 0,${start},${end},Note,,0,0,0,,${noteText}\n`;
+      }
       body += `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}\n`;
     });
     const blob = new Blob([header + body], { type: 'text/plain' });
@@ -435,7 +472,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       {/* ── SEGMENTI ── */}
       <div className="editor-segments" style={{ background: theme.bg, borderLeft: `1px solid ${theme.border}` }}>
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
-          <button className="btn btn-sm btn-outline" onClick={() => { flushPendingSave(); onBack(); }}>← Torna ai progetti</button>
+          <button className="btn btn-sm btn-outline" onClick={() => { flushAllPending(); onBack(); }}>← Torna ai progetti</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.max(10, f - 1))}>A−</button>
@@ -494,6 +531,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                       placeholder="Scrivi la traduzione italiana..."
                       autoFocus
                     />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, background: darkMode ? 'rgba(245,166,35,0.12)' : 'rgba(245,166,35,0.15)', border: '1px solid rgba(245,166,35,0.4)', borderRadius: 8, padding: '4px 4px 4px 10px' }} onClick={e => e.stopPropagation()}>
+                      <span style={{ fontSize: 10, fontWeight: 'bold', color: '#f5a623', minWidth: 30 }}>NDT</span>
+                      <input
+                        style={{ flex: 1, padding: '8px 10px', fontSize: fontSize - 1, background: 'transparent', border: 'none', outline: 'none', color: theme.text }}
+                        value={localNote}
+                        onChange={e => handleNoteChange(e.target.value)}
+                        placeholder="Nota del traduttore (es. Nuna = sorella/amica intima maggiore)"
+                      />
+                    </div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                       <span style={{ fontSize: 10, color: theme.text2, minWidth: 24 }}>IN</span>
                       <input style={{ flex: 1, padding: '4px 8px', fontSize: 12, fontFamily: 'monospace', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none' }}
@@ -507,9 +553,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                     </div>
                   </div>
                 ) : (
-                  t?.translated
-                    ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>🇮🇹 <SubText text={t.translated} /></div>
-                    : <div style={{ fontSize: fontSize - 2, color: 'rgba(128,128,128,0.4)', fontStyle: 'italic' }}>Non tradotto</div>
+                  <>
+                    {t?.translated
+                      ? <div style={{ fontSize: fontSize, color: theme.text, lineHeight: 1.5 }}>🇮🇹 <SubText text={t.translated} /></div>
+                      : <div style={{ fontSize: fontSize - 2, color: 'rgba(128,128,128,0.4)', fontStyle: 'italic' }}>Non tradotto</div>}
+                    {t?.note && (
+                      <div style={{ fontSize: fontSize - 3, color: '#f5a623', marginTop: 4 }}>📝 NDT: {t.note}</div>
+                    )}
+                  </>
                 )}
               </div>
             );
