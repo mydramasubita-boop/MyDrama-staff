@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from '../firebase.js';
+import { auth, logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from '../firebase.js';
 
 export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [tab, setTab] = useState('projects');
@@ -18,6 +18,20 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   const toggleExpand = (id) => setExpandedSeries(prev => ({ ...prev, [id]: !prev[id] }));
   const refreshUsers = () => getAllUsers().then(setUsers);
   const totalEps = series.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
+
+  const handleRoleChange = async (uid, newRole) => {
+    await saveUserProfile(uid, { role: newRole });
+    refreshUsers();
+  };
+
+  const handleToggleDisabled = async (uid, currentlyDisabled) => {
+    const msg = currentlyDisabled
+      ? 'Riattivare questo utente? Potrà tornare ad accedere all\'app.'
+      : 'Disattivare questo utente? Non potrà più accedere all\'app finché non lo riattivi.';
+    if (!confirm(msg)) return;
+    await saveUserProfile(uid, { disabled: !currentlyDisabled });
+    refreshUsers();
+  };
 
   return (
     <div className="app-layout">
@@ -77,15 +91,45 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
             </div>
             <div className="card">
               <table className="table">
-                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th></tr></thead>
+                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th>Azioni</th></tr></thead>
                 <tbody>
-                  {users.map(u => (
-                    <tr key={u.id}>
-                      <td>{u.name}</td>
-                      <td style={{ color: 'var(--text2)' }}>{u.email}</td>
-                      <td><span className={`role-badge role-${u.role}`}>{u.role}</span></td>
-                    </tr>
-                  ))}
+                  {users.map(u => {
+                    const isSelf = auth.currentUser?.uid === u.id;
+                    return (
+                      <tr key={u.id}>
+                        <td>{u.name}</td>
+                        <td style={{ color: 'var(--text2)' }}>{u.email}</td>
+                        <td>
+                          <select
+                            className="input-field"
+                            style={{ width: 110, padding: '4px 8px', fontSize: 12 }}
+                            value={u.role}
+                            disabled={isSelf}
+                            title={isSelf ? 'Non puoi modificare il tuo stesso ruolo' : ''}
+                            onChange={e => handleRoleChange(u.id, e.target.value)}
+                          >
+                            <option value="staff">Staff</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </td>
+                        <td>
+                          {u.disabled
+                            ? <span className="role-badge" style={{ background: 'rgba(255,80,80,0.15)', color: '#ff5050' }}>Disattivato</span>
+                            : <span className="role-badge" style={{ background: 'rgba(80,255,120,0.15)', color: '#3ecf6a' }}>Attivo</span>}
+                        </td>
+                        <td>
+                          <button
+                            className={`btn btn-sm ${u.disabled ? 'btn-grad' : 'btn-danger'}`}
+                            disabled={isSelf}
+                            title={isSelf ? 'Non puoi disattivare te stessa' : ''}
+                            onClick={() => handleToggleDisabled(u.id, u.disabled)}
+                          >
+                            {u.disabled ? 'Riattiva' : 'Disattiva'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
