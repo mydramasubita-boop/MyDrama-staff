@@ -62,7 +62,17 @@ function assToHtml(text) {
     .replace(/\\N/g, '<br>').replace(/\n/g, '<br>');
 }
 
-const ASS_STYLES = ['Default', 'Pensato', 'Note', 'Titolo', 'CARTELLI', 'Musiche', 'Attori', 'Crediti'];
+const ASS_STYLES = ['Default', 'Pensato', 'Titolo', 'CARTELLI', 'Musiche'];
+
+// Solo per l'anteprima a video nell'editor - NON influenza in alcun modo l'export .ass,
+// che resta sempre testo semplice indipendentemente da questi stili visivi.
+const SUBTITLE_STYLE_VISUALS = {
+  Default: {},
+  Pensato: { fontStyle: 'italic' },
+  Titolo: { fontSize: 22, fontWeight: 900, letterSpacing: 0.5 },
+  CARTELLI: { background: '#000e56' },
+  Musiche: { color: '#ff6fb0' },
+};
 
 const DEFAULT_ASS_HEADER = `[Script Info]
 Title: MyDramaStaff export
@@ -221,7 +231,11 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
         return ct >= seg.startSec && ct <= end;
       });
-      setCurrentSubtitles(active.map(seg => translations[seg.id]?.translated || '').filter(Boolean));
+      setCurrentSubtitles(
+        active
+          .map(seg => ({ text: translations[seg.id]?.translated || '', style: translations[seg.id]?.style || seg.style || 'Default' }))
+          .filter(s => s.text)
+      );
       if (active.length > 0) setActiveIdx(segments.indexOf(active[active.length - 1]));
     };
     video.addEventListener('timeupdate', onTimeUpdate);
@@ -313,7 +327,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const seg = segments[idx];
     if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
-    setCurrentSubtitles(t?.translated ? [t.translated] : []);
+    setCurrentSubtitles(t?.translated ? [{ text: t.translated, style: t?.style || seg?.style || 'Default' }] : []);
     // Autoplay del segmento quando selezionato
     playSegment(seg);
     // Lo scroll ora è gestito dal useEffect su [activeIdx] sopra
@@ -323,7 +337,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const seg = segments[activeIdx];
     if (!seg) return;
     setLocalText(val);
-    setCurrentSubtitles(val ? [val] : []);
+    const style = translations[seg.id]?.style || seg.style || 'Default';
+    setCurrentSubtitles(val ? [{ text: val, style }] : []);
     pendingSaveRef.current = {
       segId: seg.id,
       payload: { original: seg.original, translated: val, translatedBy: auth.currentUser?.uid },
@@ -365,6 +380,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       style: newStyle,
       translatedBy: auth.currentUser?.uid,
     });
+    if (segments[activeIdx]?.id === seg.id) {
+      const text = translations[seg.id]?.translated || '';
+      setCurrentSubtitles(text ? [{ text, style: newStyle }] : []);
+    }
   };
 
   const sendNotification = async () => {
@@ -440,8 +459,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           {currentSubtitles.length > 0 && (
             <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               {currentSubtitles.map((sub, i) => (
-                <div key={i} style={{ display: 'inline-block', background: 'rgba(0,0,0,0.78)', color: 'white', fontSize: 16, fontWeight: 'bold', padding: '4px 14px', borderRadius: 6, textShadow: '1px 1px 2px #000', maxWidth: '90%', lineHeight: 1.4 }}>
-                  <SubText text={sub} />
+                <div key={i} style={{ display: 'inline-block', background: 'rgba(0,0,0,0.78)', color: 'white', fontSize: 16, fontWeight: 'bold', padding: '4px 14px', borderRadius: 6, textShadow: '1px 1px 2px #000', maxWidth: '90%', lineHeight: 1.4, ...(SUBTITLE_STYLE_VISUALS[sub.style] || {}) }}>
+                  <SubText text={sub.text} />
                 </div>
               ))}
             </div>
