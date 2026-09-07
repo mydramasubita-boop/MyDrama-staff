@@ -112,6 +112,8 @@ function SubText({ text }) {
 }
 
 export default function ProjectEditor({ series, episode, profile, onBack }) {
+  const [fileSegments, setFileSegments] = useState([]);
+  const [customSegments, setCustomSegments] = useState(episode.customSegments || []);
   const [segments, setSegments] = useState([]);
   const [assHeader, setAssHeader] = useState(null);
   const [translations, setTranslations] = useState({});
@@ -138,6 +140,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const noteDebounceRef = useRef(null);
   const pendingNoteRef = useRef(null);
   const lastSyncedSegId = useRef(null);
+  const pendingSelectId = useRef(null);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -155,7 +158,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       .then(r => r.text())
       .then(text => {
         const segs = isASS ? parseASS(text) : parseSRT(text);
-        setSegments(segs);
+        setFileSegments(segs);
         if (isASS) {
           const idx = text.indexOf('[Events]');
           setAssHeader(idx > -1 ? text.slice(0, idx) : null);
@@ -163,8 +166,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           setAssHeader(null);
         }
       })
-      .catch(() => setSegments([]));
+      .catch(() => setFileSegments([]));
   }, [episode.assUrl]);
+
+  // Unisce le righe del file sorgente con quelle aggiunte manualmente,
+  // ordinate per tempo di inizio: da qui in poi "segments" è sempre la lista completa.
+  useEffect(() => {
+    const merged = [...fileSegments, ...customSegments].sort((a, b) => a.startSec - b.startSec);
+    setSegments(merged);
+  }, [fileSegments, customSegments]);
+
+  // Se e' appena stata aggiunta una riga manuale, appena compare nella lista unita
+  // la seleziona automaticamente per l'editing (timing/stile/traduzione).
+  useEffect(() => {
+    if (!pendingSelectId.current) return;
+    const idx = segments.findIndex(s => s.id === pendingSelectId.current);
+    if (idx !== -1) {
+      pendingSelectId.current = null;
+      selectSegment(idx);
+    }
+  }, [segments]);
 
   // Carica traduzioni da Firebase
   useEffect(() => {
@@ -304,9 +325,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (!videoRef.current || !seg) return;
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
     isFreePlaying.current = false;
-    videoRef.current.currentTime = seg.startSec;
+    const t = translations[seg.id];
+    const startSec = timeToSec(t?.timingStart || seg.start);
+    const endSec = timeToSec(t?.timingEnd || seg.end);
+    videoRef.current.currentTime = startSec;
+    setCurrentSubtitles(t?.translated ? [{ text: t.translated, style: t?.style || seg.style || 'Default' }] : []);
     videoRef.current.play();
-    const endSec = timeToSec(translations[seg.id]?.timingEnd || seg.end);
     segPlayInterval.current = setInterval(() => {
       if (videoRef.current && videoRef.current.currentTime >= endSec) {
         videoRef.current.pause();
@@ -384,6 +408,39 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       const text = translations[seg.id]?.translated || '';
       setCurrentSubtitles(text ? [{ text, style: newStyle }] : []);
     }
+  };
+
+  // Inserisce una nuova riga manuale subito dopo la riga all'indice "afterIdx"
+  // (o all'inizio se afterIdx e' -1), con timing di partenza a meta' strada
+  // tra le due righe adiacenti. Viene aperta subito in editing.
+  const addCustomSegment = (afterIdx) => {
+    const prevSeg = segments[afterIdx];
+    const nextSeg = segments[afterIdx + 1];
+    const prevEndSec = prevSeg ? timeToSec(translations[prevSeg.id]?.timingEnd || prevSeg.end) : 0;
+    const nextStartSec = nextSeg ? timeToSec(translations[nextSeg.id]?.timingStart || nextSeg.start) : prevEndSec + 3;
+    const startSec = prevEndSec;
+    const endSec = Math.max(startSec + 0.5, Math.min(nextStartSec, startSec + 3));
+    const id = `custom_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const newSeg = {
+      id,
+      start: secToASSTime(startSec),
+      end: secToASSTime(endSec),
+      startSec,
+      original: '(riga aggiunta manualmente — nessun testo originale)',
+      style: 'Default',
+      isCustom: true,
+    };
+    const updated = [...customSegments, newSeg];
+    setCustomSegments(updated);
+    updateEpisode(episode.id, { customSegments: updated });
+    pendingSelectId.current = id;
+  };
+
+  const deleteCustomSegment = (id) => {
+    if (!confirm('Eliminare questa riga aggiunta manualmente?')) return;
+    const updated = customSegments.filter(s => s.id !== id);
+    setCustomSegments(updated);
+    updateEpisode(episode.id, { customSegments: updated });
   };
 
   const sendNotification = async () => {
@@ -510,31 +567,54 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               {episode.assUrl ? 'Caricamento...' : 'Nessun file .ass/.srt collegato.'}
             </div>
           )}
+          {segments.length > 0 && (
+            <button
+              className="btn btn-sm btn-outline"
+              style={{ width: '100%', marginBottom: 8, fontSize: 11, borderStyle: 'dashed' }}
+              onClick={() => addCustomSegment(-1)}
+            >
+              + Aggiungi riga qui
+            </button>
+          )}
           {segments.map((seg, idx) => {
             const t = translations[seg.id];
             const isActive = idx === activeIdx;
             return (
-              <div key={seg.id} ref={isActive ? activeSegRef : null}
+              <React.Fragment key={seg.id}>
+              <div ref={isActive ? activeSegRef : null}
                 style={{ background: isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg, border: `1px solid ${isActive ? 'var(--primary)' : theme.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8 }}
                 onClick={() => selectSegment(idx)}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                   <div style={{ fontFamily: 'monospace', fontSize: fontSize - 2, color: 'var(--primary)' }}>
                     {t?.timingStart || seg.start} → {t?.timingEnd || seg.end}
+                    {seg.isCustom && <span style={{ marginLeft: 8, fontSize: 10, color: theme.text2, fontFamily: 'var(--font-body)' }}>(manuale)</span>}
                   </div>
-                  {isActive ? (
-                    <select
-                      value={t?.style || seg.style || 'Default'}
-                      onChange={e => saveStyleEdit(seg, e.target.value)}
-                      onClick={ev => ev.stopPropagation()}
-                      style={{ fontSize: 11, padding: '3px 6px', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none', cursor: 'pointer' }}
-                    >
-                      {[...new Set([...ASS_STYLES, seg.style || 'Default'])].map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  ) : (
-                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: `1px solid ${theme.border}`, color: theme.text2, whiteSpace: 'nowrap' }}>
-                      {t?.style || seg.style || 'Default'}
-                    </span>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {isActive ? (
+                      <select
+                        value={t?.style || seg.style || 'Default'}
+                        onChange={e => saveStyleEdit(seg, e.target.value)}
+                        onClick={ev => ev.stopPropagation()}
+                        style={{ fontSize: 11, padding: '3px 6px', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, outline: 'none', cursor: 'pointer' }}
+                      >
+                        {[...new Set([...ASS_STYLES, seg.style || 'Default'])].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    ) : (
+                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: `1px solid ${theme.border}`, color: theme.text2, whiteSpace: 'nowrap' }}>
+                        {t?.style || seg.style || 'Default'}
+                      </span>
+                    )}
+                    {seg.isCustom && (
+                      <button
+                        className="btn btn-sm btn-danger"
+                        style={{ padding: '2px 8px', fontSize: 11 }}
+                        title="Elimina questa riga manuale"
+                        onClick={ev => { ev.stopPropagation(); deleteCustomSegment(seg.id); }}
+                      >
+                        🗑
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontSize: fontSize, color: theme.text2, marginBottom: 10, lineHeight: 1.5 }}>
                   <SubText text={seg.original} />
@@ -582,6 +662,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                   </>
                 )}
               </div>
+              <button
+                className="btn btn-sm btn-outline"
+                style={{ width: '100%', marginBottom: 8, fontSize: 11, borderStyle: 'dashed' }}
+                onClick={() => addCustomSegment(idx)}
+              >
+                + Aggiungi riga qui
+              </button>
+              </React.Fragment>
             );
           })}
         </div>
