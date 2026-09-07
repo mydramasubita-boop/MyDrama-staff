@@ -117,6 +117,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [segments, setSegments] = useState([]);
   const [assHeader, setAssHeader] = useState(null);
   const [translations, setTranslations] = useState({});
+  const [translationsLoaded, setTranslationsLoaded] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const [users, setUsers] = useState([]);
   const [showSendModal, setShowSendModal] = useState(false);
@@ -189,7 +190,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   // Carica traduzioni da Firebase
   useEffect(() => {
-    const unsub = getSegments(episode.id, setTranslations);
+    const unsub = getSegments(episode.id, (data) => {
+      setTranslations(data);
+      setTranslationsLoaded(true);
+    });
     return unsub;
   }, [episode.id]);
 
@@ -282,6 +286,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // ogni lettera digitata faceva un giro: salva su Firebase -> torna indietro
   // -> il box si reimposta -> il cursore vola in fondo al testo.
   useEffect(() => {
+    if (!translationsLoaded) return;
     const seg = segments[activeIdx];
     if (!seg) return;
     if (lastSyncedSegId.current !== seg.id) {
@@ -289,7 +294,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       setLocalNote(translations[seg.id]?.note || '');
       lastSyncedSegId.current = seg.id;
     }
-  }, [activeIdx, segments, translations]);
+  }, [activeIdx, segments, translations, translationsLoaded]);
 
   // Salva subito eventuali modifiche non ancora scritte (debounce in corso)
   const flushPendingSave = () => {
@@ -387,12 +392,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const saveTimingEdit = (seg) => {
-    if (!editTiming.start && !editTiming.end) return;
+    if (editTiming.start === undefined && editTiming.end === undefined) return;
+    const t = translations[seg.id];
     saveSegment(episode.id, seg.id, {
       original: seg.original,
-      translated: translations[seg.id]?.translated || '',
-      timingStart: editTiming.start || seg.start,
-      timingEnd: editTiming.end || seg.end,
+      translated: t?.translated || '',
+      timingStart: editTiming.start !== undefined ? editTiming.start : (t?.timingStart || seg.start),
+      timingEnd: editTiming.end !== undefined ? editTiming.end : (t?.timingEnd || seg.end),
       translatedBy: auth.currentUser?.uid,
     });
     setEditTiming({});
