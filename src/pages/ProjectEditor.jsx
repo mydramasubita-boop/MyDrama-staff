@@ -249,8 +249,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       if (!isFreePlaying.current) return;
       const ct = video.currentTime;
       const active = segments.filter(seg => {
+        const start = timeToSec(translations[seg.id]?.timingStart || seg.start);
         const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
-        return ct >= seg.startSec && ct <= end;
+        return ct >= start && ct <= end;
       });
       setCurrentSubtitles(
         active
@@ -349,8 +350,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setActiveIdx(idx);
     setEditTiming({});
     const seg = segments[idx];
-    if (videoRef.current && seg) videoRef.current.currentTime = seg.startSec;
     const t = translations[seg?.id];
+    if (videoRef.current && seg) videoRef.current.currentTime = timeToSec(t?.timingStart || seg.start);
     setCurrentSubtitles(t?.translated ? [{ text: t.translated, style: t?.style || seg?.style || 'Default' }] : []);
     // Autoplay del segmento quando selezionato
     playSegment(seg);
