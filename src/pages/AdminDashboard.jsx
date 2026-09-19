@@ -7,6 +7,7 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [users, setUsers] = useState([]);
   const [showNewSeries, setShowNewSeries] = useState(false);
   const [showNewUser, setShowNewUser] = useState(false);
+  const [staffFilter, setStaffFilter] = useState('');
   const [expandedSeries, setExpandedSeries] = useState({});
 
   useEffect(() => {
@@ -18,6 +19,8 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   const toggleExpand = (id) => setExpandedSeries(prev => ({ ...prev, [id]: !prev[id] }));
   const refreshUsers = () => getAllUsers().then(setUsers);
   const totalEps = series.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
+  const filteredSeries = series.filter(s => !staffFilter || s.team?.includes(staffFilter));
+  const filteredEps = filteredSeries.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
 
   const handleRoleChange = async (uid, newRole) => {
     await saveUserProfile(uid, { role: newRole });
@@ -54,12 +57,26 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
             <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <div>
                 <div className="page-title">Progetti</div>
-                <div className="page-subtitle">{series.length} serie • {totalEps} episodi</div>
+                <div className="page-subtitle">{filteredSeries.length} serie • {filteredEps} episodi</div>
               </div>
-              <button className="btn btn-grad" onClick={() => setShowNewSeries(true)}>+ Nuova serie</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select
+                  className="input-field"
+                  style={{ width: 200 }}
+                  value={staffFilter}
+                  onChange={e => setStaffFilter(e.target.value)}
+                >
+                  <option value="">Tutti i progetti</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>Solo di {u.name}</option>
+                  ))}
+                </select>
+                <button className="btn btn-grad" onClick={() => setShowNewSeries(true)}>+ Nuova serie</button>
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {series.map(s => (
+              {filteredSeries
+                .map(s => (
                 <SeriesCard
                   key={s.id}
                   series={s}
@@ -74,6 +91,11 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
               {series.length === 0 && (
                 <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text2)' }}>
                   Nessun progetto ancora. Clicca "+ Nuova serie" per iniziare.
+                </div>
+              )}
+              {series.length > 0 && staffFilter && filteredSeries.length === 0 && (
+                <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text2)' }}>
+                  Nessun progetto assegnato a questa persona.
                 </div>
               )}
             </div>
@@ -153,7 +175,9 @@ function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode
     if (!expanded) return;
     const unsub = getEpisodes(series.id, (eps) => {
       setEpisodes(eps);
-      updateSeries(series.id, { episodeCount: eps.length });
+      if (eps.length !== series.episodeCount) {
+        updateSeries(series.id, { episodeCount: eps.length });
+      }
     });
     return unsub;
   }, [expanded, series.id]);
