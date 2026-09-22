@@ -47,8 +47,10 @@ function parseSRT(rawText) {
 
 function timeToSec(t) {
   if (!t) return 0;
-  const parts = t.replace(',', '.').split(':');
+  const parts = t.trim().replace(',', '.').split(':');
   if (parts.length === 3) return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+  if (parts.length === 1) return parseFloat(parts[0]) || 0;
   return 0;
 }
 
@@ -130,11 +132,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [darkMode, setDarkMode] = useState(true);
   const [fontSize, setFontSize] = useState(14);
   const [loadingIt, setLoadingIt] = useState(false);
+  const [gotoLine, setGotoLine] = useState('');
+  const [gotoTime, setGotoTime] = useState('');
   const [localText, setLocalText] = useState('');
   const [localNote, setLocalNote] = useState('');
   const videoRef = useRef(null);
   const activeSegRef = useRef(null);
   const isFreePlaying = useRef(false);
+  const suppressFreePlayRef = useRef(false);
   const segPlayInterval = useRef(null);
   const saveDebounceRef = useRef(null);
   const pendingSaveRef = useRef(null);
@@ -238,7 +243,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onPlay = () => { isFreePlaying.current = true; };
+    const onPlay = () => { if (!suppressFreePlayRef.current) isFreePlaying.current = true; };
     const onPause = () => { isFreePlaying.current = false; };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -330,18 +335,20 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const playSegment = (seg) => {
     if (!videoRef.current || !seg) return;
     if (segPlayInterval.current) clearInterval(segPlayInterval.current);
+    suppressFreePlayRef.current = true;
     isFreePlaying.current = false;
     const t = translations[seg.id];
     const startSec = timeToSec(t?.timingStart || seg.start);
     const endSec = timeToSec(t?.timingEnd || seg.end);
     videoRef.current.currentTime = startSec;
     setCurrentSubtitles(t?.translated ? [{ text: t.translated, style: t?.style || seg.style || 'Default' }] : []);
-    videoRef.current.play();
+    videoRef.current.play().catch(() => {});
     segPlayInterval.current = setInterval(() => {
       if (videoRef.current && videoRef.current.currentTime >= endSec) {
         videoRef.current.pause();
         clearInterval(segPlayInterval.current);
         isFreePlaying.current = false;
+        suppressFreePlayRef.current = false;
       }
     }, 50);
   };
@@ -361,6 +368,26 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     // Autoplay del segmento quando selezionato
     playSegment(seg);
     // Lo scroll ora è gestito dal useEffect su [activeIdx] sopra
+  };
+
+  const handleGotoLine = () => {
+    const n = parseInt(gotoLine, 10);
+    if (!n || n < 1 || n > segments.length) return;
+    selectSegment(n - 1);
+    setGotoLine('');
+  };
+
+  const handleGotoTime = () => {
+    const target = timeToSec(gotoTime);
+    if (!gotoTime.trim()) return;
+    // Cerca la prima riga la cui fine e' oltre il minuto cercato (quindi quella "in corso" a quel punto)
+    let idx = segments.findIndex(seg => {
+      const end = timeToSec(translations[seg.id]?.timingEnd || seg.end);
+      return end >= target;
+    });
+    if (idx === -1) idx = segments.length - 1;
+    if (idx !== -1) selectSegment(idx);
+    setGotoTime('');
   };
 
   const handleTranslationChange = (val) => {
@@ -539,6 +566,34 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               ▶ Riproduci solo questo segmento
             </button>
           )}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+              <input
+                type="number"
+                min="1"
+                max={segments.length}
+                className="input-field"
+                style={{ flex: 1, padding: '6px 8px', fontSize: 12 }}
+                placeholder="Vai a riga n."
+                value={gotoLine}
+                onChange={e => setGotoLine(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleGotoLine()}
+              />
+              <button className="btn btn-sm btn-outline" style={{ fontSize: 11, padding: '6px 10px' }} onClick={handleGotoLine}>Vai</button>
+            </div>
+            <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+              <input
+                type="text"
+                className="input-field"
+                style={{ flex: 1, padding: '6px 8px', fontSize: 12, fontFamily: 'monospace' }}
+                placeholder="Vai a min. (10:03)"
+                value={gotoTime}
+                onChange={e => setGotoTime(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleGotoTime()}
+              />
+              <button className="btn btn-sm btn-outline" style={{ fontSize: 11, padding: '6px 10px' }} onClick={handleGotoTime}>Vai</button>
+            </div>
+          </div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 8 }}>{completedCount}/{segments.length} tradotti ({progress}%)</div>
           <div style={{ height: 4, background: darkMode ? '#0f0f1a' : '#ddd', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
