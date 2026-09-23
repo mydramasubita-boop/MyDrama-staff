@@ -557,7 +557,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             </div>
           )}
         </div>
-        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}`, flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
           {/* Pulsante riproduzione segmento */}
@@ -605,46 +605,51 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             </button>
           )}
 
-          {/* ── Legenda comandi ── */}
+          {/* ── Legenda comandi + codici tastiera: box con altezza fissa e scroll proprio ── */}
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-            <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Legenda comandi
-            </div>
-            <div style={{ fontSize: 12, color: theme.text2, lineHeight: 2 }}>
-              <div><code style={{ color: 'var(--primary)' }}>\N</code> — a capo</div>
-              <div><code style={{ color: 'var(--primary)' }}>{'{\\b1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\b0}'}</code> — grassetto</div>
-              <div><code style={{ color: 'var(--primary)' }}>{'{\\i1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\i0}'}</code> — corsivo</div>
-              <div><code style={{ color: 'var(--primary)' }}>{'{\\u1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\u0}'}</code> — sottolineato</div>
-              <div><code style={{ color: 'var(--primary)' }}>{'{\\s1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\s0}'}</code> — barrato</div>
-              <div style={{ marginTop: 6 }}><strong style={{ color: '#f5a623' }}>NDT</strong> — nota del traduttore: <strong>compare a video</strong>, non è un appunto interno</div>
-            </div>
-          </div>
-
-          {/* ── Codici tastiera per lettere accentate maiuscole ── */}
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-            <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Codici tastiera lettere accentate maiuscole
-            </div>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 4 }}>Windows</div>
-                <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.9, fontFamily: 'monospace' }}>
-                  <div>Alt+0192 → À</div>
-                  <div>Alt+0200 → È</div>
-                  <div>Alt+0201 → É</div>
-                  <div>Alt+0204 → Ì</div>
-                  <div>Alt+0210 → Ò</div>
-                  <div>Alt+0217 → Ù</div>
-                </div>
+            <div
+              style={{
+                maxHeight: 200,
+                overflowY: 'auto',
+                paddingRight: 8,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Legenda comandi
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 4 }}>Mac</div>
-                <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.9, fontFamily: 'monospace' }}>
-                  <div>Shift+à → À</div>
-                  <div>Shift+è → È</div>
-                  <div>Shift+ì → Ì</div>
-                  <div>Shift+ò → Ò</div>
-                  <div>Shift+ù → Ù</div>
+              <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5 }}>
+                <div><code style={{ color: 'var(--primary)' }}>\N</code> — a capo</div>
+                <div><code style={{ color: 'var(--primary)' }}>{'{\\b1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\b0}'}</code> — grassetto</div>
+                <div><code style={{ color: 'var(--primary)' }}>{'{\\i1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\i0}'}</code> — corsivo</div>
+                <div><code style={{ color: 'var(--primary)' }}>{'{\\u1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\u0}'}</code> — sottolineato</div>
+                <div><code style={{ color: 'var(--primary)' }}>{'{\\s1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\s0}'}</code> — barrato</div>
+                <div style={{ marginTop: 4 }}><strong style={{ color: '#f5a623' }}>NDT</strong> — nota del traduttore: <strong>compare a video</strong>, non è un appunto interno</div>
+              </div>
+
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, margin: '12px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Codici tastiera lettere accentate maiuscole
+              </div>
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>Windows</div>
+                  <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5, fontFamily: 'monospace' }}>
+                    <div>Alt+0192 → À</div>
+                    <div>Alt+0200 → È</div>
+                    <div>Alt+0201 → É</div>
+                    <div>Alt+0204 → Ì</div>
+                    <div>Alt+0210 → Ò</div>
+                    <div>Alt+0217 → Ù</div>
+                  </div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>Mac</div>
+                  <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5, fontFamily: 'monospace' }}>
+                    <div>Shift+à → À</div>
+                    <div>Shift+è → È</div>
+                    <div>Shift+ì → Ì</div>
+                    <div>Shift+ò → Ò</div>
+                    <div>Shift+ù → Ù</div>
+                  </div>
                 </div>
               </div>
             </div>
