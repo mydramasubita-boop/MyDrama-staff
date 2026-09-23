@@ -557,7 +557,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             </div>
           )}
         </div>
-        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
+        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}`, flex: 1, overflowY: 'auto', minHeight: 0 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
           {/* Pulsante riproduzione segmento */}
