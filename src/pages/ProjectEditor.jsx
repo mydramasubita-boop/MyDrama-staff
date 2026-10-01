@@ -147,6 +147,8 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const pendingNoteRef = useRef(null);
   const lastSyncedSegId = useRef(null);
   const pendingSelectId = useRef(null);
+  const progressSaveDebounceRef = useRef(null);
+  const lastSavedProgressRef = useRef(null);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -300,6 +302,24 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       lastSyncedSegId.current = seg.id;
     }
   }, [activeIdx, segments, translations, translationsLoaded]);
+
+  // Salva progresso/percentuale sulla scheda episodio, cosi' la lista progetti
+  // mostra l'avanzamento senza dover aprire ogni episodio. Debounce + confronto
+  // con l'ultimo valore salvato per non scrivere su Firestore ad ogni keystroke.
+  useEffect(() => {
+    if (!translationsLoaded || segments.length === 0) return;
+    const completed = segments.filter(s => translations[s.id]?.translated?.trim()).length;
+    const total = segments.length;
+    const pct = Math.round((completed / total) * 100);
+    const last = lastSavedProgressRef.current;
+    if (last && last.completed === completed && last.total === total) return;
+    if (progressSaveDebounceRef.current) clearTimeout(progressSaveDebounceRef.current);
+    progressSaveDebounceRef.current = setTimeout(() => {
+      lastSavedProgressRef.current = { completed, total };
+      updateEpisode(episode.id, { progress: pct, completedSegments: completed, totalSegments: total });
+    }, 800);
+    return () => clearTimeout(progressSaveDebounceRef.current);
+  }, [segments, translations, translationsLoaded, episode.id]);
 
   // Salva subito eventuali modifiche non ancora scritte (debounce in corso)
   const flushPendingSave = () => {
