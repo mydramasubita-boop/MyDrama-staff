@@ -1,5 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, logoutUser, getAllUsers, createUser, saveUserProfile, createSeries, getSeries, updateSeries, deleteSeries, addEpisode, getEpisodes, updateEpisode, deleteEpisode } from '../firebase.js';
+
+const STATUS_OPTIONS = [
+  { value: 'pending', label: 'Da tradurre' },
+  { value: 'translating', label: 'In traduzione' },
+  { value: 'translation_done', label: 'Da checkare' },
+  { value: 'check_done', label: 'Pronto encoding' },
+];
+
+function statusLabel(s) {
+  const found = STATUS_OPTIONS.find(o => o.value === s);
+  return found ? { label: found.label, cls: `status-${s}` } : { label: s, cls: '' };
+}
 
 export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [tab, setTab] = useState('projects');
@@ -7,8 +19,11 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [users, setUsers] = useState([]);
   const [showNewSeries, setShowNewSeries] = useState(false);
   const [showNewUser, setShowNewUser] = useState(false);
-  const [staffFilter, setStaffFilter] = useState('');
   const [expandedSeries, setExpandedSeries] = useState({});
+  const [staffFilter, setStaffFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [episodesBySeries, setEpisodesBySeries] = useState({});
+  const episodeUnsubsRef = useRef({});
 
   useEffect(() => {
     const unsub = getSeries(setSeries);
@@ -16,11 +31,51 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
     return unsub;
   }, []);
 
+  // Tiene un listener episodi per ogni serie visibile (non solo quelle espanse),
+  // cosi' il filtro per stato e la % tradotta funzionano su tutte le card senza doverle aprire.
+  useEffect(() => {
+    const currentIds = new Set(series.map(s => s.id));
+
+    series.forEach(s => {
+      if (!episodeUnsubsRef.current[s.id]) {
+        episodeUnsubsRef.current[s.id] = getEpisodes(s.id, (eps) => {
+          setEpisodesBySeries(prev => ({ ...prev, [s.id]: eps }));
+          if (eps.length !== s.episodeCount) {
+            updateSeries(s.id, { episodeCount: eps.length });
+          }
+        });
+      }
+    });
+
+    Object.keys(episodeUnsubsRef.current).forEach(id => {
+      if (!currentIds.has(id)) {
+        episodeUnsubsRef.current[id]();
+        delete episodeUnsubsRef.current[id];
+        setEpisodesBySeries(prev => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }
+    });
+  }, [series]);
+
+  useEffect(() => () => {
+    Object.values(episodeUnsubsRef.current).forEach(unsub => unsub());
+  }, []);
+
   const toggleExpand = (id) => setExpandedSeries(prev => ({ ...prev, [id]: !prev[id] }));
   const refreshUsers = () => getAllUsers().then(setUsers);
-  const totalEps = series.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
-  const filteredSeries = series.filter(s => !staffFilter || s.team?.includes(staffFilter));
-  const filteredEps = filteredSeries.reduce((acc, s) => acc + (s.episodeCount || 0), 0);
+
+  const filteredSeries = series.filter(s => {
+    if (staffFilter && !s.team?.includes(staffFilter)) return false;
+    if (statusFilter) {
+      const eps = episodesBySeries[s.id] || [];
+      if (!eps.some(ep => ep.status === statusFilter)) return false;
+    }
+    return true;
+  });
+  const filteredEps = filteredSeries.reduce((acc, s) => acc + (episodesBySeries[s.id]?.length ?? s.episodeCount ?? 0), 0);
 
   const handleRoleChange = async (uid, newRole) => {
     await saveUserProfile(uid, { role: newRole });
@@ -54,12 +109,23 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
       <div className="main-content">
         {tab === 'projects' && (
           <>
-            <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
               <div>
                 <div className="page-title">Progetti</div>
                 <div className="page-subtitle">{filteredSeries.length} serie • {filteredEps} episodi</div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  className="input-field"
+                  style={{ width: 170 }}
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                >
+                  <option value="">Tutti gli stati</option>
+                  {STATUS_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
                 <select
                   className="input-field"
                   style={{ width: 200 }}
@@ -75,12 +141,12 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {filteredSeries
-                .map(s => (
+              {filteredSeries.map(s => (
                 <SeriesCard
                   key={s.id}
                   series={s}
                   users={users}
+                  episodes={episodesBySeries[s.id] || []}
                   expanded={!!expandedSeries[s.id]}
                   onToggle={() => toggleExpand(s.id)}
                   onDelete={() => { if(confirm('Eliminare la serie?')) deleteSeries(s.id); }}
@@ -93,9 +159,9 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
                   Nessun progetto ancora. Clicca "+ Nuova serie" per iniziare.
                 </div>
               )}
-              {series.length > 0 && staffFilter && filteredSeries.length === 0 && (
+              {series.length > 0 && filteredSeries.length === 0 && (
                 <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text2)' }}>
-                  Nessun progetto assegnato a questa persona.
+                  Nessun progetto corrisponde ai filtri selezionati.
                 </div>
               )}
             </div>
@@ -165,30 +231,25 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   );
 }
 
-function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode, onUpdate }) {
-  const [episodes, setEpisodes] = useState([]);
+function ProgressBar({ translatedCount, totalSegments, progress }) {
+  if (totalSegments === undefined || totalSegments === null) {
+    return <span style={{ fontSize: 11, color: 'var(--text2)', fontStyle: 'italic' }}>Non ancora aperto</span>;
+  }
+  const pct = progress || 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 140 }}>
+      <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2 }} />
+      </div>
+      <span style={{ fontSize: 11, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{translatedCount || 0}/{totalSegments} ({pct}%)</span>
+    </div>
+  );
+}
+
+function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onOpenEpisode, onUpdate }) {
   const [showAddEp, setShowAddEp] = useState(false);
   const [editEp, setEditEp] = useState(null);
   const [editSeries, setEditSeries] = useState(false);
-
-  useEffect(() => {
-    if (!expanded) return;
-    const unsub = getEpisodes(series.id, (eps) => {
-      setEpisodes(eps);
-      if (eps.length !== series.episodeCount) {
-        updateSeries(series.id, { episodeCount: eps.length });
-      }
-    });
-    return unsub;
-  }, [expanded, series.id]);
-
-  const statusLabel = (s) => {
-    if (s === 'pending') return { label: 'Da tradurre', cls: 'status-in_progress' };
-    if (s === 'translating') return { label: 'In traduzione', cls: 'status-in_progress' };
-    if (s === 'translation_done') return { label: 'Da checkare', cls: 'status-translation_done' };
-    if (s === 'check_done') return { label: 'Pronto encoding', cls: 'status-check_done' };
-    return { label: s, cls: '' };
-  };
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -196,7 +257,7 @@ function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 16 }}>{series.title}</div>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
-            {series.isFilm ? 'Film' : `Serie • ${series.episodeCount || 0} episodi`}
+            {series.isFilm ? 'Film' : `Serie • ${episodes.length || series.episodeCount || 0} episodi`}
             {' • '}
             {(series.team || []).map(uid => users.find(u => u.id === uid)?.name).filter(Boolean).join(', ')}
           </div>
@@ -211,7 +272,7 @@ function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode
       {expanded && (
         <div style={{ padding: '16px 24px' }}>
           <table className="table" style={{ marginBottom: 16 }}>
-            <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th>Azioni</th></tr></thead>
+            <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th>Progresso</th><th>Azioni</th></tr></thead>
             <tbody>
               {episodes.map(ep => {
                 const st = statusLabel(ep.status);
@@ -220,6 +281,7 @@ function SeriesCard({ series, users, expanded, onToggle, onDelete, onOpenEpisode
                     <td style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{ep.number}</td>
                     <td>{ep.title || `Episodio ${ep.number}`}</td>
                     <td><span className={`project-status ${st.cls}`}>{st.label}</span></td>
+                    <td><ProgressBar translatedCount={ep.translatedCount} totalSegments={ep.totalSegments} progress={ep.progress} /></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm btn-grad" onClick={() => onOpenEpisode({ series, episode: ep })}>Apri</button>
