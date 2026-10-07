@@ -13,6 +13,28 @@ function statusLabel(s) {
   return found ? { label: found.label, cls: `status-${s}` } : { label: s, cls: '' };
 }
 
+// Stessa radice/cartella usate dall'uploader-raw su GitHub (FTP_PATH punta qui o
+// in una sua sottocartella). Da qui l'app puo' costruire da sola i link raw E sub
+// quando i file sul server seguono radice+numero (rinominati a mano se serve).
+const RAW_BASE_URL = 'https://wh1373514.ispot.cc/wp/wp-content/MY%20DRAMA%20TV/RAW/';
+
+// Stessa logica dell'uploader-raw su GitHub: righe tipo "episodio 01 - link" o
+// anche solo link puri, uno per riga (o incollati tutti insieme separati da
+// spazi/a capo). Se una riga specifica il numero lo usa e riparte a contare
+// da li', altrimenti incrementa da dove era rimasto.
+function parseLinkLines(text, startNum) {
+  const out = [];
+  let n = startNum || 1;
+  const re = /(?:episodio\s*(\d+)\D{0,10}?)?(https?:\/\/\S+)/gi;
+  let m;
+  while ((m = re.exec(text || '')) !== null) {
+    if (m[1]) n = parseInt(m[1], 10);
+    out.push({ number: n, url: m[2].replace(/[),.;]+$/, '') });
+    n += 1;
+  }
+  return out;
+}
+
 export default function AdminDashboard({ profile, onOpenEpisode }) {
   const [tab, setTab] = useState('projects');
   const [series, setSeries] = useState([]);
@@ -248,6 +270,7 @@ function ProgressBar({ translatedCount, totalSegments, progress }) {
 
 function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onOpenEpisode, onUpdate }) {
   const [showAddEp, setShowAddEp] = useState(false);
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [editEp, setEditEp] = useState(null);
   const [editSeries, setEditSeries] = useState(false);
 
@@ -295,7 +318,10 @@ function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onO
             </tbody>
           </table>
           {!series.isFilm && (
-            <button className="btn btn-sm btn-outline" onClick={() => setShowAddEp(true)}>+ Aggiungi episodio</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowAddEp(true)}>+ Aggiungi episodio</button>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowBulkAdd(true)}>📦 Carica multipli</button>
+            </div>
           )}
         </div>
       )}
@@ -303,6 +329,7 @@ function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onO
       {showAddEp && <EpisodeModal seriesId={series.id} onClose={() => setShowAddEp(false)} />}
       {editEp && <EpisodeModal seriesId={series.id} episode={editEp} onClose={() => setEditEp(null)} />}
       {editSeries && <EditSeriesModal series={series} users={users} onUpdate={onUpdate} onClose={() => setEditSeries(false)} />}
+      {showBulkAdd && <BulkAddEpisodesModal seriesId={series.id} existingEpisodes={episodes} onClose={() => setShowBulkAdd(false)} />}
     </div>
   );
 }
@@ -391,6 +418,192 @@ function EpisodeModal({ seriesId, episode, onClose }) {
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onClose}>Annulla</button>
           <button className="btn btn-grad" onClick={handleSubmit} disabled={loading}>{loading ? 'Salvataggio...' : 'Salva'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkAddEpisodesModal({ seriesId, existingEpisodes, onClose }) {
+  const nextNum = (existingEpisodes || []).reduce((max, e) => Math.max(max, e.number || 0), 0) + 1;
+  const [mode, setMode] = useState('pattern'); // 'pattern' | 'paste'
+  const [startNum, setStartNum] = useState(nextNum);
+
+  // --- Modalita' "Incolla liste" ---
+  const [rawText, setRawText] = useState('');
+  const [subText, setSubText] = useState('');
+  const [subItText, setSubItText] = useState('');
+
+  // --- Modalita' "Genera da pattern" ---
+  const [folder, setFolder] = useState('');
+  const [radice, setRadice] = useState('');
+  const [videoExt, setVideoExt] = useState('mkv');
+  const [subExt, setSubExt] = useState('srt');
+  const [epCount, setEpCount] = useState(1);
+
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(null);
+
+  let rows = [];
+  if (mode === 'paste') {
+    // Raw e sub vengono incollati come due liste parallele, nello stesso ordine
+    // di episodio (come fai gia' con l'uploader su GitHub): la riga i della lista
+    // raw si abbina alla riga i della lista sub. I numeri episodio li decide solo
+    // la lista raw (eventuali "episodio NN -" nel testo sub vengono ignorati).
+    const rawLinks = parseLinkLines(rawText, startNum);
+    const subUrls = (subText.match(/https?:\/\/\S+/gi) || []).map(u => u.replace(/[),.;]+$/, ''));
+    const subItUrls = (subItText.match(/https?:\/\/\S+/gi) || []).map(u => u.replace(/[),.;]+$/, ''));
+    rows = rawLinks.map((r, i) => ({
+      number: r.number,
+      videoUrl: r.url,
+      assUrl: subUrls[i] || '',
+      assItUrl: subItUrls[i] || '',
+    }));
+  } else {
+    // Genera i link da radice+numero: richiede che tu abbia rinominato anche i
+    // sub sul server con la stessa convenzione (radice+NN.estensione), cosi'
+    // non servono piu' i suffissi _trackID_lang che l'uploader da' di default.
+    const folderPart = folder.trim() ? `${folder.trim().replace(/^\/+|\/+$/g, '')}/` : '';
+    const base = `${RAW_BASE_URL}${folderPart}`;
+    const n = Math.max(0, parseInt(epCount, 10) || 0);
+    if (radice.trim() && n > 0) {
+      rows = Array.from({ length: n }, (_, i) => {
+        const num = String(startNum + i).padStart(2, '0');
+        return {
+          number: startNum + i,
+          videoUrl: `${base}${radice.trim()}${num}.${videoExt}`,
+          assUrl: `${base}${radice.trim()}${num}.${subExt}`,
+          assItUrl: '',
+        };
+      });
+    }
+  }
+
+  const pasteRawCount = mode === 'paste' ? parseLinkLines(rawText, startNum).length : 0;
+  const pasteSubCount = mode === 'paste' ? (subText.match(/https?:\/\/\S+/gi) || []).length : 0;
+  const countMismatch = mode === 'paste' && pasteRawCount > 0 && pasteSubCount > 0 && pasteRawCount !== pasteSubCount;
+  const canSubmit = rows.length > 0 && rows.every(r => r.videoUrl && r.assUrl);
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    let ok = 0, fail = 0;
+    for (const r of rows) {
+      try {
+        await addEpisode(seriesId, { number: r.number, title: '', videoUrl: r.videoUrl, assUrl: r.assUrl, assItUrl: r.assItUrl });
+        ok++;
+      } catch (e) { fail++; }
+    }
+    setLoading(false);
+    setDone({ ok, fail });
+    if (fail === 0) setTimeout(onClose, 1200);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-title">📦 Carica più episodi insieme</div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button type="button" className={`btn btn-sm ${mode === 'pattern' ? 'btn-grad' : 'btn-outline'}`} onClick={() => setMode('pattern')}>⚡ Genera da pattern</button>
+          <button type="button" className={`btn btn-sm ${mode === 'paste' ? 'btn-grad' : 'btn-outline'}`} onClick={() => setMode('paste')}>📋 Incolla liste</button>
+        </div>
+
+        {mode === 'pattern' ? (
+          <>
+            <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: -8, marginBottom: 16 }}>
+              Funziona solo se hai rinominato anche i sub sul server con la stessa radice+numero dei raw (niente più <code>_track2_und</code>). Genera da sola tutti i link, niente da incollare.
+            </p>
+            <div className="form-row">
+              <label className="label">Cartella dentro RAW/ (opzionale, vuoto = cartella principale)</label>
+              <input className="input-field" placeholder="es. emergency-couple" value={folder} onChange={e => setFolder(e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label className="label">Radice nome file (es. emergency.couple.)</label>
+              <input className="input-field" placeholder="radice." value={radice} onChange={e => setRadice(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Estensione video</label>
+                <select className="input-field" value={videoExt} onChange={e => setVideoExt(e.target.value)}>
+                  <option value="mkv">mkv</option><option value="mp4">mp4</option>
+                </select>
+              </div>
+              <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Estensione sub</label>
+                <select className="input-field" value={subExt} onChange={e => setSubExt(e.target.value)}>
+                  <option value="srt">srt</option><option value="ass">ass</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Numero primo episodio</label>
+                <input className="input-field" type="number" value={startNum} onChange={e => setStartNum(parseInt(e.target.value, 10) || 1)} />
+              </div>
+              <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Quanti episodi</label>
+                <input className="input-field" type="number" value={epCount} onChange={e => setEpCount(e.target.value)} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: -8, marginBottom: 16 }}>
+              Incolla i link raw e i link sub, uno per riga, nello stesso ordine di episodio. Puoi anche scrivere "episodio 01 - link" se preferisci essere esplicita sul numero.
+            </p>
+            <div className="form-row">
+              <label className="label">Numero primo episodio (se non specifichi "episodio NN" nel testo)</label>
+              <input className="input-field" type="number" value={startNum} onChange={e => setStartNum(parseInt(e.target.value, 10) || 1)} style={{ width: 120 }} />
+            </div>
+            <div className="form-row">
+              <label className="label">Link video raw (uno per riga, in ordine)</label>
+              <textarea className="input-field" rows={5} style={{ fontFamily: 'monospace', fontSize: 12 }} placeholder={'https://...01.mkv\nhttps://...02.mkv'} value={rawText} onChange={e => setRawText(e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label className="label">Link sub originali .ass/.srt da tradurre (uno per riga, stesso ordine)</label>
+              <textarea className="input-field" rows={5} style={{ fontFamily: 'monospace', fontSize: 12 }} placeholder={'https://...01_track2_und.srt\nhttps://...02_track2_und.srt'} value={subText} onChange={e => setSubText(e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label className="label">Link sub italiani già tradotti (opzionale, stesso ordine)</label>
+              <textarea className="input-field" rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} value={subItText} onChange={e => setSubItText(e.target.value)} />
+            </div>
+          </>
+        )}
+
+        {countMismatch && (
+          <div className="error-msg" style={{ marginBottom: 12 }}>
+            ⚠️ {pasteRawCount} link raw ma {pasteSubCount} link sub: controlla l'abbinamento prima di procedere.
+          </div>
+        )}
+
+        {rows.length > 0 && (
+          <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 16 }}>
+            <table className="table" style={{ margin: 0 }}>
+              <thead><tr><th>Ep.</th><th>Raw</th><th>Sub</th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{r.number}</td>
+                    <td style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.videoUrl}>{r.videoUrl || '—'}</td>
+                    <td style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.assUrl ? 'inherit' : '#ff5050' }} title={r.assUrl}>{r.assUrl || 'manca'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {done && (
+          <div style={{ marginBottom: 12, fontSize: 14 }}>
+            {done.fail === 0 ? `✅ ${done.ok} episodi creati!` : `⚠️ Creati ${done.ok}, falliti ${done.fail}.`}
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button className="btn btn-outline" onClick={onClose}>Annulla</button>
+          <button className="btn btn-grad" onClick={handleSubmit} disabled={loading || !canSubmit}>
+            {loading ? 'Creazione...' : `Crea ${rows.length || ''} episodi`}
+          </button>
         </div>
       </div>
     </div>
