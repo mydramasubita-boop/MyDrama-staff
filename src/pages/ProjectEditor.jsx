@@ -149,6 +149,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const pendingSelectId = useRef(null);
   const progressSaveDebounceRef = useRef(null);
   const lastSavedProgressRef = useRef(null);
+  // Tiene traccia dei salvataggi falliti (es. connessione saltata, tab che si
+  // chiude a meta' scrittura) cosi' non si perdono in silenzio: segId -> payload
+  // ancora da scrivere. Un retry automatico ci riprova ogni pochi secondi finche'
+  // non va a buon fine, e lo stato e' visibile in UI invece che invisibile.
+  const failedSavesRef = useRef({});
+  const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -321,6 +327,24 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     return () => clearTimeout(progressSaveDebounceRef.current);
   }, [segments, translations, translationsLoaded, episode.id]);
 
+  // Scrittura effettiva su Firestore, SEMPRE con gestione dell'errore: prima
+  // girava senza await ne' catch, quindi se la scrittura falliva (connessione
+  // saltata, tab chiusa a meta') la traduzione spariva senza che nessuno se ne
+  // accorgesse. Ora in caso di errore il payload resta in coda e un retry
+  // automatico ci riprova, invece di perderlo.
+  const commitSave = async (segId, payload) => {
+    setSaveStatus('saving');
+    try {
+      await saveSegment(episode.id, segId, payload);
+      delete failedSavesRef.current[segId];
+      setSaveStatus(Object.keys(failedSavesRef.current).length > 0 ? 'error' : 'saved');
+    } catch (e) {
+      console.error('Salvataggio fallito, resto in coda per il retry', segId, e);
+      failedSavesRef.current[segId] = { ...(failedSavesRef.current[segId] || {}), ...payload };
+      setSaveStatus('error');
+    }
+  };
+
   // Salva subito eventuali modifiche non ancora scritte (debounce in corso)
   const flushPendingSave = () => {
     if (saveDebounceRef.current) {
@@ -330,7 +354,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (pendingSaveRef.current) {
       const { segId, payload } = pendingSaveRef.current;
       pendingSaveRef.current = null;
-      saveSegment(episode.id, segId, payload);
+      commitSave(segId, payload);
     }
   };
 
@@ -342,7 +366,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (pendingNoteRef.current) {
       const { segId, note } = pendingNoteRef.current;
       pendingNoteRef.current = null;
-      saveSegment(episode.id, segId, { note });
+      commitSave(segId, { note });
     }
   };
 
@@ -350,6 +374,40 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     flushPendingSave();
     flushPendingNote();
   };
+
+  const hasUnsavedWork = () =>
+    !!pendingSaveRef.current || !!pendingNoteRef.current || Object.keys(failedSavesRef.current).length > 0;
+
+  // Rete di sicurezza: riprova i salvataggi falliti ogni 5s finche' non vanno
+  // a buon fine, cosi' un blip di connessione non costa il lavoro fatto.
+  useEffect(() => {
+    const retry = setInterval(() => {
+      Object.entries(failedSavesRef.current).forEach(([segId, payload]) => commitSave(segId, payload));
+    }, 5000);
+    return () => clearInterval(retry);
+  }, [episode.id]);
+
+  // Rete di sicurezza: scrive subito (non aspetta il debounce) appena la tab
+  // va in background o l'utente prova a chiudere/navigare altrove, ed avvisa
+  // col dialogo del browser se c'e' ancora qualcosa non confermato come salvato
+  // — prima bastava chiudere la tab durante il debounce di 600ms, o un crash
+  // del browser, per perdere l'ultima modifica (o peggio, se il salvataggio
+  // falliva in silenzio, anche molto di piu').
+  useEffect(() => {
+    const handleVisibility = () => { if (document.visibilityState === 'hidden') flushAllPending(); };
+    const handleBeforeUnload = (e) => {
+      flushAllPending();
+      if (hasUnsavedWork()) { e.preventDefault(); e.returnValue = ''; }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', flushAllPending);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', flushAllPending);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Riproduce solo il segmento corrente e si ferma
   const playSegment = (seg) => {
@@ -441,7 +499,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const saveTimingEdit = (seg) => {
     if (editTiming.start === undefined && editTiming.end === undefined) return;
     const t = translations[seg.id];
-    saveSegment(episode.id, seg.id, {
+    commitSave(seg.id, {
       original: seg.original,
       translated: t?.translated || '',
       timingStart: editTiming.start !== undefined ? editTiming.start : (t?.timingStart || seg.start),
@@ -452,7 +510,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const saveStyleEdit = (seg, newStyle) => {
-    saveSegment(episode.id, seg.id, {
+    commitSave(seg.id, {
       original: seg.original,
       translated: translations[seg.id]?.translated || '',
       style: newStyle,
@@ -682,6 +740,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
         <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
           <button className="btn btn-sm btn-outline" onClick={() => { flushAllPending(); onBack(); }}>← Torna ai progetti</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {saveStatus === 'saving' && <span style={{ fontSize: 11, color: theme.text2 }}>⏳ Salvataggio...</span>}
+            {saveStatus === 'saved' && <span style={{ fontSize: 11, color: '#3ecf6a' }}>💾 Salvato</span>}
+            {saveStatus === 'error' && (
+              <span style={{ fontSize: 11, color: '#ff5050', fontWeight: 'bold' }} title="Il salvataggio è fallito, l'app continua a riprovare automaticamente. Non chiudere la pagina finché non torna verde.">
+                ⚠️ Errore salvataggio, riprovo...
+              </span>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.max(10, f - 1))}>A−</button>
               <span style={{ fontSize: 11, color: theme.text2 }}>{fontSize}px</span>
