@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { saveSegment, getSegments, updateEpisode, getAllUsers } from '../firebase.js';
+import { saveSegment, getSegments, updateEpisode, getAllUsers, getEpisodes } from '../firebase.js';
 import { auth } from '../firebase.js';
 import emailjs from 'emailjs-com';
 
@@ -155,6 +155,18 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // non va a buon fine, e lo stato e' visibile in UI invece che invisibile.
   const failedSavesRef = useRef({});
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  // L'episodio arriva come prop, cioe' uno scatto nel momento in cui hai cliccato
+  // "Apri": se da un'altra finestra (o dall'admin) viene modificato un campo come
+  // il link del .ass italiano, questa pagina non se ne accorge finche' non la
+  // richiudi. liveEpisode tiene i dati sincronizzati con Firestore in tempo reale.
+  const [liveEpisode, setLiveEpisode] = useState(episode);
+  useEffect(() => {
+    const unsub = getEpisodes(series.id, (eps) => {
+      const found = eps.find(e => e.id === episode.id);
+      if (found) setLiveEpisode(found);
+    });
+    return unsub;
+  }, [series.id, episode.id]);
 
   const theme = darkMode ? {
     bg: '#0f0f1a', card: '#1a1a2e', text: '#e8e8f0', text2: '#888899',
@@ -217,12 +229,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   // Importa file .ass italiano e pre-popola traduzioni
   const importItalianASS = useCallback(async (segs) => {
-    if (!episode.assItUrl || !segs.length) return;
+    if (!liveEpisode.assItUrl || !segs.length) return;
     setLoadingIt(true);
     try {
-      const res = await fetch(episode.assItUrl);
+      const res = await fetch(liveEpisode.assItUrl);
       const text = await res.text();
-      const itSegs = episode.assItUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
+      const itSegs = liveEpisode.assItUrl.toLowerCase().includes('.ass') ? parseASS(text) : parseSRT(text);
       // Abbina per indice
       for (let i = 0; i < Math.min(segs.length, itSegs.length); i++) {
         const orig = segs[i];
@@ -237,15 +249,15 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       }
     } catch (e) { console.error('Import IT failed', e); }
     setLoadingIt(false);
-  }, [episode.assItUrl, episode.id]);
+  }, [liveEpisode.assItUrl, episode.id]);
 
   // Dopo caricamento segmenti, importa se non ci sono traduzioni
   useEffect(() => {
-    if (segments.length > 0 && episode.assItUrl) {
+    if (segments.length > 0 && liveEpisode.assItUrl) {
       const hasTranslations = Object.keys(translations).length > 0;
       if (!hasTranslations) importItalianASS(segments);
     }
-  }, [segments, episode.assItUrl]);
+  }, [segments, liveEpisode.assItUrl]);
 
   // Play/pause tracking
   useEffect(() => {
@@ -677,7 +689,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
           {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
-          {episode.assItUrl && !loadingIt && (
+          {liveEpisode.assItUrl && !loadingIt && (
             <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
               🔄 Reimporta file .ass italiano
             </button>
