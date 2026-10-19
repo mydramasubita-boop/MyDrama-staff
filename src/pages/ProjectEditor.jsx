@@ -227,8 +227,17 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (episode.status === 'pending') updateEpisode(episode.id, { status: 'translating' });
   }, []);
 
-  // Importa file .ass italiano e pre-popola traduzioni
-  const importItalianASS = useCallback(async (segs) => {
+  // Copia sempre aggiornata delle traduzioni, per consultarla dentro l'import
+  // senza dover rifare la funzione ad ogni modifica.
+  const translationsRef = useRef({});
+  useEffect(() => { translationsRef.current = translations; }, [translations]);
+  const autoImportTriedRef = useRef(false);
+
+  // Importa file .ass italiano e pre-popola traduzioni.
+  // FIX perdita modifiche: di default NON tocca le righe che hanno gia' una
+  // traduzione (le tue correzioni). Sovrascrive tutto solo se chiamato con
+  // overwrite=true, cioe' dal bottone "Reimporta" dopo conferma esplicita.
+  const importItalianASS = useCallback(async (segs, overwrite = false) => {
     if (!liveEpisode.assItUrl || !segs.length) return;
     setLoadingIt(true);
     try {
@@ -239,6 +248,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       for (let i = 0; i < Math.min(segs.length, itSegs.length); i++) {
         const orig = segs[i];
         const it = itSegs[i];
+        if (!overwrite && translationsRef.current[orig.id]?.translated?.trim()) continue;
         if (it.original) {
           await saveSegment(episode.id, orig.id, {
             original: orig.original,
@@ -251,13 +261,17 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     setLoadingIt(false);
   }, [liveEpisode.assItUrl, episode.id]);
 
-  // Dopo caricamento segmenti, importa se non ci sono traduzioni
+  // Import automatico, UNA sola volta per apertura e solo dopo che le traduzioni
+  // salvate sono arrivate da Firestore. Prima non aspettava translationsLoaded:
+  // se il file dei sub si caricava per primo, `translations` era ancora vuoto,
+  // l'app lo scambiava per "episodio mai tradotto" e riscriveva TUTTE le righe
+  // con il file italiano importato, cancellando le correzioni.
   useEffect(() => {
-    if (segments.length > 0 && liveEpisode.assItUrl) {
-      const hasTranslations = Object.keys(translations).length > 0;
-      if (!hasTranslations) importItalianASS(segments);
-    }
-  }, [segments, liveEpisode.assItUrl]);
+    if (autoImportTriedRef.current) return;
+    if (!translationsLoaded || segments.length === 0 || !liveEpisode.assItUrl) return;
+    autoImportTriedRef.current = true;
+    if (Object.keys(translations).length === 0) importItalianASS(segments);
+  }, [segments, liveEpisode.assItUrl, translationsLoaded]);
 
   // Play/pause tracking
   useEffect(() => {
@@ -690,7 +704,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           </div>
           {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
           {liveEpisode.assItUrl && !loadingIt && (
-            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => importItalianASS(segments)}>
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => { if (confirm('Reimportare il file italiano? ATTENZIONE: sovrascrive TUTTE le traduzioni che hai scritto/corretto con quelle del file.')) importItalianASS(segments, true); }}>
               🔄 Reimporta file .ass italiano
             </button>
           )}
