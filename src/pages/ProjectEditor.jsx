@@ -270,7 +270,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (autoImportTriedRef.current) return;
     if (!translationsLoaded || segments.length === 0 || !liveEpisode.assItUrl) return;
     autoImportTriedRef.current = true;
-    if (Object.keys(translations).length === 0) importItalianASS(segments);
+    // Si abbina per indice al file originale: usa fileSegments, non segments,
+    // altrimenti le righe aggiunte a mano sfalsano l'abbinamento di tutte le seguenti.
+    if (Object.keys(translations).length === 0) importItalianASS(fileSegments);
   }, [segments, liveEpisode.assItUrl, translationsLoaded]);
 
   // Play/pause tracking
@@ -348,7 +350,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     if (progressSaveDebounceRef.current) clearTimeout(progressSaveDebounceRef.current);
     progressSaveDebounceRef.current = setTimeout(() => {
       lastSavedProgressRef.current = { completed, total };
-      updateEpisode(episode.id, { progress: pct, completedSegments: completed, totalSegments: total });
+      // translatedCount e' il nome che legge la dashboard admin (ProgressBar):
+      // prima salvavo "completedSegments" e li' compariva "0/585 (100%)".
+      updateEpisode(episode.id, { progress: pct, translatedCount: completed, totalSegments: total });
     }, 800);
     return () => clearTimeout(progressSaveDebounceRef.current);
   }, [segments, translations, translationsLoaded, episode.id]);
@@ -358,8 +362,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // saltata, tab chiusa a meta') la traduzione spariva senza che nessuno se ne
   // accorgesse. Ora in caso di errore il payload resta in coda e un retry
   // automatico ci riprova, invece di perderlo.
+  const inFlightRef = useRef(0);
   const commitSave = async (segId, payload) => {
     setSaveStatus('saving');
+    inFlightRef.current += 1;
     try {
       await saveSegment(episode.id, segId, payload);
       delete failedSavesRef.current[segId];
@@ -369,6 +375,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
       failedSavesRef.current[segId] = { ...(failedSavesRef.current[segId] || {}), ...payload };
       setSaveStatus('error');
     }
+    inFlightRef.current -= 1;
   };
 
   // Salva subito eventuali modifiche non ancora scritte (debounce in corso)
@@ -401,8 +408,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     flushPendingNote();
   };
 
+  // Include anche le scritture partite ma non ancora confermate: dopo il flush
+  // i pending sono vuoti, quindi senza questo il browser non avvisava mai.
   const hasUnsavedWork = () =>
-    !!pendingSaveRef.current || !!pendingNoteRef.current || Object.keys(failedSavesRef.current).length > 0;
+    !!pendingSaveRef.current || !!pendingNoteRef.current || inFlightRef.current > 0 || Object.keys(failedSavesRef.current).length > 0;
+
+  // Se la pagina viene smontata in altri modi (non solo dal bottone "Torna ai progetti")
+  // scrive comunque quello che e' rimasto in sospeso.
+  useEffect(() => () => flushAllPending(), []);
 
   // Rete di sicurezza: riprova i salvataggi falliti ogni 5s finche' non vanno
   // a buon fine, cosi' un blip di connessione non costa il lavoro fatto.
@@ -498,6 +511,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const seg = segments[activeIdx];
     if (!seg) return;
     setLocalText(val);
+    // Se c'e' un salvataggio fallito in coda per questa riga, il retry deve
+    // portare il testo piu' recente, non quello vecchio (che altrimenti
+    // potrebbe sovrascrivere la versione nuova).
+    if (failedSavesRef.current[seg.id]) failedSavesRef.current[seg.id].translated = val;
     const style = translations[seg.id]?.style || seg.style || 'Default';
     setCurrentSubtitles(val ? [{ text: val, style }] : []);
     pendingSaveRef.current = {
@@ -603,10 +620,18 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
 
   const exportSRT = () => {
     let srt = '';
+    // Formato SRT rigoroso HH:MM:SS,mmm: i tempi presi da un .ass ("0:02:09.58")
+    // con un semplice replace del punto risultavano invalidi per molti player.
+    const toSRT = (t) => {
+      const s = Math.max(0, timeToSec(t));
+      const ms = Math.round(s * 1000);
+      const p = (n, w = 2) => String(n).padStart(w, '0');
+      return `${p(Math.floor(ms / 3600000))}:${p(Math.floor((ms % 3600000) / 60000))}:${p(Math.floor((ms % 60000) / 1000))},${p(ms % 1000, 3)}`;
+    };
     segments.forEach((seg, i) => {
       const t = translations[seg.id];
-      const startSRT = (t?.timingStart || seg.start).replace('.', ',');
-      const endSRT = (t?.timingEnd || seg.end || '').replace('.', ',');
+      const startSRT = toSRT(t?.timingStart || seg.start);
+      const endSRT = toSRT(t?.timingEnd || seg.end);
       srt += `${i + 1}\n${startSRT} --> ${endSRT}\n${t?.translated || ''}\n\n`;
     });
     const blob = new Blob([srt], { type: 'text/plain' });
@@ -704,7 +729,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           </div>
           {loadingIt && <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 8 }}>⏳ Importazione traduzione in corso...</div>}
           {liveEpisode.assItUrl && !loadingIt && (
-            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => { if (confirm('Reimportare il file italiano? ATTENZIONE: sovrascrive TUTTE le traduzioni che hai scritto/corretto con quelle del file.')) importItalianASS(segments, true); }}>
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 10, width: '100%', fontSize: 11 }} onClick={() => { if (confirm('Reimportare il file italiano? ATTENZIONE: sovrascrive TUTTE le traduzioni che hai scritto/corretto con quelle del file.')) importItalianASS(fileSegments, true); }}>
               🔄 Reimporta file .ass italiano
             </button>
           )}
