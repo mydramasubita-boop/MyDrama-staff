@@ -1045,7 +1045,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
                 {isActive ? (
                   <div>
                     <textarea
-                      style={{ width: '100%', padding: '10px 12px', background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 8, color: theme.text, fontFamily: 'var(--font-body)', fontSize: fontSize, outline: 'none', resize: 'vertical', minHeight: 60, lineHeight: 1.5 }}
+                      style={{ width: '100%', padding: '10px 12px', background: theme.inputBg, border: `1px solid var(--primary)`, borderRadius: 8, color: theme.text, fontFamily: 'var(--font-body)', fontSize: isTouch ? Math.max(fontSize, 16) : fontSize, outline: 'none', resize: 'vertical', minHeight: 60, lineHeight: 1.5 }}
                       value={localText}
                       onChange={e => handleTranslationChange(e.target.value)}
                       onKeyDown={handleKeyDown}
