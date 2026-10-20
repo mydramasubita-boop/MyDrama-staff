@@ -210,3 +210,37 @@ select.input-field option { background: var(--bg2); }
 /* ── DIVIDER ── */
 .divider { height: 1px; background: var(--border); margin: 24px 0; }
 .section-title { font-family: var(--font-display); font-size: 14px; letter-spacing: 2px; color: var(--text2); text-transform: uppercase; margin-bottom: 16px; }
+
+/* ============================================================
+   TABLET / SCHERMI STRETTI  (su PC larghi non cambia nulla)
+   ============================================================ */
+
+/* Tabelle: scorrono in orizzontale invece di sforare la pagina */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll > .table { min-width: 520px; }
+
+@media (max-width: 900px) {
+  /* Sidebar -> barra in alto, contenuto a tutta larghezza */
+  .app-layout { flex-direction: column; }
+  .sidebar {
+    width: 100%; min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center;
+    gap: 8px 12px; padding: 10px 16px;
+    border-right: 0; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-logo { padding: 0; margin: 0; border-bottom: 0; font-size: 16px; }
+  .sidebar-user { margin: 0; padding: 6px 12px; }
+  .sidebar-nav { flex-direction: row; flex: 1 1 auto; }
+  .sidebar-logout { margin-left: auto; }
+  .main-content { padding: 16px; width: 100%; min-width: 0; }
+  .page-header { margin-bottom: 20px; }
+  .modal { padding: 24px; max-height: 90dvh; }
+}
+
+/* Dispositivi touch: bersagli grandi e niente zoom automatico di iOS nei campi */
+@media (pointer: coarse) {
+  .btn, .nav-item, .sidebar-logout { min-height: 44px; }
+  .btn-sm { padding-top: 10px; padding-bottom: 10px; }
+  .input-field, .form-group input, .segment-input { min-height: 44px; }
+  input, select { font-size: 16px !important; }
+  textarea { font-size: 16px; }
+}
