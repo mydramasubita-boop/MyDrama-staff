@@ -139,7 +139,7 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <select
                   className="input-field"
-                  style={{ width: 170 }}
+                  style={{ width: 170, maxWidth: '100%' }}
                   value={statusFilter}
                   onChange={e => setStatusFilter(e.target.value)}
                 >
@@ -150,7 +150,7 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
                 </select>
                 <select
                   className="input-field"
-                  style={{ width: 200 }}
+                  style={{ width: 200, maxWidth: '100%' }}
                   value={staffFilter}
                   onChange={e => setStaffFilter(e.target.value)}
                 >
@@ -192,14 +192,14 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
 
         {tab === 'users' && (
           <>
-            <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
               <div>
                 <div className="page-title">Utenti</div>
                 <div className="page-subtitle">{users.length} membri del team</div>
               </div>
               <button className="btn btn-grad" onClick={() => setShowNewUser(true)}>+ Nuovo utente</button>
             </div>
-            <div className="card">
+            <div className="card table-scroll">
               <table className="table">
                 <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th>Azioni</th></tr></thead>
                 <tbody>
@@ -294,7 +294,8 @@ function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onO
 
       {expanded && (
         <div style={{ padding: '16px 24px' }}>
-          <table className="table" style={{ marginBottom: 16 }}>
+          <div className="table-scroll" style={{ marginBottom: 16 }}>
+          <table className="table">
             <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th>Progresso</th><th>Azioni</th></tr></thead>
             <tbody>
               {episodes.map(ep => {
@@ -317,8 +318,9 @@ function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onO
               })}
             </tbody>
           </table>
+          </div>
           {!series.isFilm && (
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn btn-sm btn-outline" onClick={() => setShowAddEp(true)}>+ Aggiungi episodio</button>
               <button className="btn btn-sm btn-outline" onClick={() => setShowBulkAdd(true)}>📦 Carica multipli</button>
             </div>
