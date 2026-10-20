@@ -159,6 +159,11 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // "Apri": se da un'altra finestra (o dall'admin) viene modificato un campo come
   // il link del .ass italiano, questa pagina non se ne accorge finche' non la
   // richiudi. liveEpisode tiene i dati sincronizzati con Firestore in tempo reale.
+  // Selezione multipla righe (Shift+clic = intervallo, Ctrl/Cmd+clic = aggiungi/togli)
+  // per applicare uno stile a piu' righe insieme, come in Aegisub.
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkStyle, setBulkStyle] = useState('Default');
+  const anchorIdxRef = useRef(null);
   const [liveEpisode, setLiveEpisode] = useState(episode);
   useEffect(() => {
     const unsub = getEpisodes(series.id, (eps) => {
@@ -565,6 +570,45 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     }
   };
 
+  const handleRowClick = (e, idx) => {
+    if (e.shiftKey) {
+      window.getSelection()?.removeAllRanges();
+      const from = anchorIdxRef.current ?? activeIdx;
+      const [a, b] = from <= idx ? [from, idx] : [idx, from];
+      setSelectedIds(segments.slice(a, b + 1).map(s => s.id));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      const id = segments[idx].id;
+      anchorIdxRef.current = idx;
+      setSelectedIds(prev => {
+        const base = prev.length === 0 && segments[activeIdx] ? [segments[activeIdx].id] : prev;
+        return base.includes(id) ? base.filter(x => x !== id) : [...base, id];
+      });
+      return;
+    }
+    setSelectedIds([]);
+    anchorIdxRef.current = idx;
+    selectSegment(idx);
+  };
+
+  // Applica lo stile scelto a tutte le righe selezionate. Non invia il testo
+  // tradotto (solo lo stile), cosi' non puo' sovrascrivere una traduzione.
+  const applyBulkStyle = () => {
+    if (selectedIds.length === 0) return;
+    flushAllPending();
+    const ids = new Set(selectedIds);
+    segments.filter(s => ids.has(s.id)).forEach(seg => {
+      commitSave(seg.id, { original: seg.original, style: bulkStyle, translatedBy: auth.currentUser?.uid });
+    });
+    const active = segments[activeIdx];
+    if (active && ids.has(active.id)) {
+      const text = translations[active.id]?.translated || '';
+      setCurrentSubtitles(text ? [{ text, style: bulkStyle }] : []);
+    }
+    setSelectedIds([]);
+  };
+
   // Inserisce una nuova riga manuale subito dopo la riga all'indice "afterIdx"
   // (o all'inizio se afterIdx e' -1), con timing di partenza a meta' strada
   // tra le due righe adiacenti. Viene aperta subito in editing.
@@ -815,6 +859,25 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               {episode.assUrl ? 'Caricamento...' : 'Nessun file .ass/.srt collegato.'}
             </div>
           )}
+          {selectedIds.length > 0 && (
+            <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', marginBottom: 8, background: theme.card, border: '1px solid var(--primary)', borderRadius: 10 }}>
+              <span style={{ fontSize: 12, color: theme.text, fontWeight: 'bold' }}>{selectedIds.length} righe selezionate</span>
+              <select
+                value={bulkStyle}
+                onChange={e => setBulkStyle(e.target.value)}
+                style={{ fontSize: 12, padding: '4px 8px', background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text }}
+              >
+                {[...new Set([...ASS_STYLES, ...segments.map(s => translations[s.id]?.style || s.style || 'Default')])].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button className="btn btn-sm btn-grad" onClick={applyBulkStyle}>Applica stile</button>
+              <button className="btn btn-sm btn-outline" onClick={() => setSelectedIds([])}>Deseleziona</button>
+            </div>
+          )}
+          {segments.length > 0 && selectedIds.length === 0 && (
+            <div style={{ fontSize: 11, color: theme.text2, marginBottom: 6 }}>
+              Shift+clic = seleziona un intervallo di righe · Ctrl+clic = aggiungi/togli una riga, poi applica lo stile a tutte insieme
+            </div>
+          )}
           {segments.length > 0 && (
             <button
               className="btn btn-sm btn-outline"
@@ -827,11 +890,12 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           {segments.map((seg, idx) => {
             const t = translations[seg.id];
             const isActive = idx === activeIdx;
+            const isSelected = selectedIds.includes(seg.id);
             return (
               <React.Fragment key={seg.id}>
               <div ref={isActive ? activeSegRef : null}
-                style={{ background: isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg, border: `1px solid ${isActive ? 'var(--primary)' : theme.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8 }}
-                onClick={() => selectSegment(idx)}>
+                style={{ background: isSelected ? (darkMode ? 'rgba(80,140,255,0.14)' : 'rgba(80,140,255,0.15)') : isActive ? (darkMode ? 'rgba(255,20,147,0.07)' : 'rgba(139,0,139,0.06)') : theme.segBg, border: `1px solid ${isSelected ? '#508cff' : isActive ? 'var(--primary)' : theme.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', marginBottom: 8 }}
+                onClick={(e) => handleRowClick(e, idx)}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                   <div style={{ fontFamily: 'monospace', fontSize: fontSize - 2, color: 'var(--primary)' }}>
                     {t?.timingStart || seg.start} → {t?.timingEnd || seg.end}
