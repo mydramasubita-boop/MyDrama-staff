@@ -62,6 +62,7 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
                 </div>
                 {expanded[s.id] && (
                   <div style={{ padding: '16px 24px' }}>
+                    <div className="table-scroll">
                     <table className="table">
                       <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th></th></tr></thead>
                       <tbody>
@@ -78,6 +79,7 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 )}
               </div>
