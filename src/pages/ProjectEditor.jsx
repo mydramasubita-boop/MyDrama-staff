@@ -113,6 +113,50 @@ function SubText({ text }) {
   return <span dangerouslySetInnerHTML={{ __html: assToHtml(text) }} />;
 }
 
+// Segue una media query (es. "(pointer: coarse)") e si aggiorna quando cambia.
+function useMedia(query) {
+  const get = () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : false);
+  const [matches, setMatches] = useState(get);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(query);
+    const handler = () => setMatches(mq.matches);
+    handler();
+    if (mq.addEventListener) mq.addEventListener('change', handler); else mq.addListener(handler);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', handler); else mq.removeListener(handler); };
+  }, [query]);
+  return matches;
+}
+
+// True se il dispositivo e' girato in orizzontale (qualsiasi dei due versi).
+// Usa screen.orientation e NON la sola media query (orientation: landscape):
+// con la tastiera a schermo aperta la finestra si accorcia e potrebbe sembrare
+// "orizzontale" anche se il tablet e' in verticale, facendo comparire l'avviso
+// mentre stai scrivendo.
+function useIsLandscape() {
+  const get = () => {
+    if (typeof window === 'undefined') return false;
+    const type = window.screen && window.screen.orientation && window.screen.orientation.type;
+    if (type) return type.startsWith('landscape');
+    if (typeof window.orientation === 'number') return Math.abs(window.orientation) === 90;
+    return window.matchMedia ? window.matchMedia('(orientation: landscape)').matches : false;
+  };
+  const [landscape, setLandscape] = useState(get);
+  useEffect(() => {
+    const handler = () => setLandscape(get());
+    window.addEventListener('orientationchange', handler);
+    window.addEventListener('resize', handler);
+    const so = window.screen && window.screen.orientation;
+    if (so && so.addEventListener) so.addEventListener('change', handler);
+    return () => {
+      window.removeEventListener('orientationchange', handler);
+      window.removeEventListener('resize', handler);
+      if (so && so.removeEventListener) so.removeEventListener('change', handler);
+    };
+  }, []);
+  return landscape;
+}
+
 export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [fileSegments, setFileSegments] = useState([]);
   const [customSegments, setCustomSegments] = useState(episode.customSegments || []);
@@ -161,6 +205,13 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   // richiudi. liveEpisode tiene i dati sincronizzati con Firestore in tempo reale.
   // Selezione multipla righe (Shift+clic = intervallo, Ctrl/Cmd+clic = aggiungi/togli)
   // per applicare uno stile a piu' righe insieme, come in Aegisub.
+  // Dispositivi touch (tablet/telefono): niente selezione multipla con Shift/Ctrl.
+  // Tablet = touch con schermo almeno 600px: layout verticale (video sopra,
+  // sottotitoli sotto) + avviso se il tablet e' in orizzontale.
+  const isTouch = useMedia('(pointer: coarse)');
+  const isTablet = useMedia('(pointer: coarse) and (min-width: 600px)');
+  const isLandscape = useIsLandscape();
+  const [showLegend, setShowLegend] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkStyle, setBulkStyle] = useState('Default');
   const anchorIdxRef = useRef(null);
@@ -571,14 +622,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   };
 
   const handleRowClick = (e, idx) => {
-    if (e.shiftKey) {
+    if (!isTouch && e.shiftKey) {
       window.getSelection()?.removeAllRanges();
       const from = anchorIdxRef.current ?? activeIdx;
       const [a, b] = from <= idx ? [from, idx] : [idx, from];
       setSelectedIds(segments.slice(a, b + 1).map(s => s.id));
       return;
     }
-    if (e.ctrlKey || e.metaKey) {
+    if (!isTouch && (e.ctrlKey || e.metaKey)) {
       const id = segments[idx].id;
       anchorIdxRef.current = idx;
       setSelectedIds(prev => {
@@ -710,11 +761,107 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const progress = segments.length > 0 ? Math.round((completedCount / segments.length) * 100) : 0;
   const activeSeg = segments[activeIdx];
 
+  // ── Contenuto della legenda (condiviso: box in pagina su PC, pannello a comparsa su tablet) ──
+  const codeStyle = { color: 'var(--primary)' };
+  const legendContent = (
+    <>
+      <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Legenda comandi
+      </div>
+      <div style={{ fontSize: isTablet ? 15 : 12, color: theme.text2, lineHeight: 1.6 }}>
+        <div><code style={codeStyle}>\N</code> — a capo</div>
+        <div><code style={codeStyle}>{'{\\b1}'}</code>testo<code style={codeStyle}>{'{\\b0}'}</code> — grassetto</div>
+        <div><code style={codeStyle}>{'{\\i1}'}</code>testo<code style={codeStyle}>{'{\\i0}'}</code> — corsivo</div>
+        <div><code style={codeStyle}>{'{\\u1}'}</code>testo<code style={codeStyle}>{'{\\u0}'}</code> — sottolineato</div>
+        <div><code style={codeStyle}>{'{\\s1}'}</code>testo<code style={codeStyle}>{'{\\s0}'}</code> — barrato</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: '#f5a623' }}>NDT</strong> — nota del traduttore: <strong>compare a video</strong>, non è un appunto interno</div>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, margin: '12px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Codici tastiera lettere accentate maiuscole
+      </div>
+      <div style={{ display: 'flex', gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>Windows</div>
+          <div style={{ fontSize: isTablet ? 14 : 12, color: theme.text2, lineHeight: 1.6, fontFamily: 'monospace' }}>
+            <div>Alt+0192 → À</div>
+            <div>Alt+0200 → È</div>
+            <div>Alt+0201 → É</div>
+            <div>Alt+0204 → Ì</div>
+            <div>Alt+0210 → Ò</div>
+            <div>Alt+0217 → Ù</div>
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>{isTablet ? 'Mac / tastiera tablet' : 'Mac'}</div>
+          <div style={{ fontSize: isTablet ? 14 : 12, color: theme.text2, lineHeight: 1.6, fontFamily: 'monospace' }}>
+            <div>Shift+à → À</div>
+            <div>Shift+è → È</div>
+            <div>Shift+ì → Ì</div>
+            <div>Shift+ò → Ò</div>
+            <div>Shift+ù → Ù</div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  // ── Override di layout: applicati SOLO su tablet (su PC tutti vuoti = comportamento invariato) ──
+  // Verticale: header → video → barra controlli → elenco righe (scorre) → azioni.
+  // "display: contents" fa diventare i figli dei due pannelli figli diretti del layout,
+  // cosi' si riordinano senza toccare il CSS esistente.
+  const tabletLayout = isTablet ? {
+    root: { background: theme.bg, display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden', gridTemplateColumns: 'none' },
+    contents: { display: 'contents' },
+    header: { order: 1, flex: 'none', flexWrap: 'wrap', gap: 8, padding: '8px 12px' },
+    video: { order: 2, flex: 'none', height: 'auto', width: '100%', aspectRatio: '16 / 9', maxHeight: '38dvh' },
+    info: { order: 3, flex: 'none' },
+    list: { order: 4, flex: '1 1 0', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' },
+    actions: { order: 5, flex: 'none', display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 12px calc(8px + env(safe-area-inset-bottom))' },
+    tap: { minHeight: 44, minWidth: 44 },
+  } : { root: { background: theme.bg } };
+
   return (
-    <div className="editor-layout" style={{ background: theme.bg }}>
+    <div
+      className="editor-layout"
+      style={tabletLayout.root}
+    >
+      {/* ── AVVISO: tablet in orizzontale → chiede di ruotare in verticale ── */}
+      {isTablet && isLandscape && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 28, padding: 48, background: '#0f0f1a', color: '#e8e8f0', textAlign: 'center' }}>
+          <svg role="img" aria-label="Tablet che passa da orizzontale a verticale" width="260" height="170" viewBox="0 0 260 170" fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="10" y="40" width="110" height="80" rx="10" stroke="#7a7a92" strokeWidth="3" />
+            <circle cx="20" cy="80" r="3" fill="#7a7a92" stroke="none" />
+            <path d="M132 62c12-16 30-22 48-18" stroke="#ff4fa8" strokeWidth="4" />
+            <path d="M172 32l12 12-16 6" stroke="#ff4fa8" strokeWidth="4" />
+            <rect x="190" y="14" width="60" height="110" rx="10" stroke="#ff4fa8" strokeWidth="3" />
+            <circle cx="220" cy="114" r="3" fill="#ff4fa8" stroke="none" />
+          </svg>
+          <h1 style={{ margin: 0, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36 }}>Ruota il tablet in verticale</h1>
+          <p style={{ margin: 0, maxWidth: 560, fontSize: 20, lineHeight: 1.5, color: '#b4b4c8' }}>
+            L'editor si usa in verticale: video in alto e sottotitoli sotto. Gira il tablet e riprendi da dove eri: il lavoro è già salvato.
+          </p>
+        </div>
+      )}
+
+      {/* ── LEGENDA a comparsa (solo tablet) ── */}
+      {isTablet && showLegend && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 900 }}>
+          <div onClick={() => setShowLegend(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} />
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '75dvh', overflowY: 'auto', boxSizing: 'border-box', padding: '12px 24px 24px', background: theme.card, color: theme.text, borderTop: '2px solid var(--primary)', borderRadius: '22px 22px 0 0' }}>
+            <div style={{ width: 48, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.25)', margin: '0 auto 10px' }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 20 }}>Legenda comandi</div>
+              <button type="button" aria-label="Chiudi legenda" className="btn btn-outline" style={{ width: 48, height: 48, padding: 0 }} onClick={() => setShowLegend(false)}>✕</button>
+            </div>
+            {legendContent}
+          </div>
+        </div>
+      )}
+
       {/* ── PLAYER ── */}
-      <div className="editor-player" style={{ background: theme.bg }}>
-        <div style={{ position: 'relative', height: '55%', background: '#000' }}>
+      <div className="editor-player" style={{ background: theme.bg, ...tabletLayout.contents }}>
+        <div style={{ position: 'relative', height: '55%', background: '#000', ...tabletLayout.video }}>
           {episode.videoUrl ? (
             <video ref={videoRef} src={episode.videoUrl} controls style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' }} />
           ) : (
@@ -730,9 +877,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             </div>
           )}
         </div>
-        <div style={{ padding: 16, background: theme.card, borderTop: `1px solid ${theme.border}` }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>
-          <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>
+        <div style={{ padding: isTablet ? '10px 16px' : 16, background: theme.card, borderTop: `1px solid ${theme.border}`, ...tabletLayout.info }}>
+          {!isTablet && <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, marginBottom: 4, color: theme.text }}>{series.title}</div>}
+          {!isTablet && <div style={{ fontSize: 12, color: theme.text2, marginBottom: 12 }}>Episodio {episode.number}{episode.title ? ` — ${episode.title}` : ''}</div>}
           {/* Pulsante riproduzione segmento */}
           {activeSeg && (
             <button className="btn btn-sm btn-outline" style={{ marginBottom: 12, width: '100%' }} onClick={() => playSegment(activeSeg)}>
@@ -779,60 +926,19 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           )}
 
           {/* ── Legenda comandi + codici tastiera: box con altezza fissa e scroll proprio ── */}
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-            <div
-              style={{
-                maxHeight: 200,
-                overflowY: 'auto',
-                paddingRight: 8,
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Legenda comandi
-              </div>
-              <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5 }}>
-                <div><code style={{ color: 'var(--primary)' }}>\N</code> — a capo</div>
-                <div><code style={{ color: 'var(--primary)' }}>{'{\\b1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\b0}'}</code> — grassetto</div>
-                <div><code style={{ color: 'var(--primary)' }}>{'{\\i1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\i0}'}</code> — corsivo</div>
-                <div><code style={{ color: 'var(--primary)' }}>{'{\\u1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\u0}'}</code> — sottolineato</div>
-                <div><code style={{ color: 'var(--primary)' }}>{'{\\s1}'}</code>testo<code style={{ color: 'var(--primary)' }}>{'{\\s0}'}</code> — barrato</div>
-                <div style={{ marginTop: 4 }}><strong style={{ color: '#f5a623' }}>NDT</strong> — nota del traduttore: <strong>compare a video</strong>, non è un appunto interno</div>
-              </div>
-
-              <div style={{ fontSize: 12, fontWeight: 'bold', color: theme.text2, margin: '12px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Codici tastiera lettere accentate maiuscole
-              </div>
-              <div style={{ display: 'flex', gap: 16 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>Windows</div>
-                  <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5, fontFamily: 'monospace' }}>
-                    <div>Alt+0192 → À</div>
-                    <div>Alt+0200 → È</div>
-                    <div>Alt+0201 → É</div>
-                    <div>Alt+0204 → Ì</div>
-                    <div>Alt+0210 → Ò</div>
-                    <div>Alt+0217 → Ù</div>
-                  </div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>Mac</div>
-                  <div style={{ fontSize: 12, color: theme.text2, lineHeight: 1.5, fontFamily: 'monospace' }}>
-                    <div>Shift+à → À</div>
-                    <div>Shift+è → È</div>
-                    <div>Shift+ì → Ì</div>
-                    <div>Shift+ò → Ò</div>
-                    <div>Shift+ù → Ù</div>
-                  </div>
-                </div>
+          {!isTablet && (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
+              <div style={{ maxHeight: 200, overflowY: 'auto', paddingRight: 8 }}>
+                {legendContent}
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
       {/* ── SEGMENTI ── */}
-      <div className="editor-segments" style={{ background: theme.bg, borderLeft: `1px solid ${theme.border}` }}>
-        <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}` }}>
+      <div className="editor-segments" style={{ background: theme.bg, borderLeft: isTablet ? 'none' : `1px solid ${theme.border}`, ...tabletLayout.contents }}>
+        <div className="editor-header" style={{ background: theme.card, borderBottom: `1px solid ${theme.border}`, ...tabletLayout.header }}>
           <button className="btn btn-sm btn-outline" onClick={() => { flushAllPending(); onBack(); }}>← Torna ai progetti</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {saveStatus === 'saving' && <span style={{ fontSize: 11, color: theme.text2 }}>⏳ Salvataggio...</span>}
@@ -847,13 +953,18 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               <span style={{ fontSize: 11, color: theme.text2 }}>{fontSize}px</span>
               <button className="btn btn-sm btn-outline" style={{ padding: '4px 10px' }} onClick={() => setFontSize(f => Math.min(24, f + 1))}>A+</button>
             </div>
-            <button className="btn btn-sm btn-outline" style={{ fontSize: 16 }} onClick={() => setDarkMode(d => !d)}>
+            <button className="btn btn-sm btn-outline" style={{ fontSize: 16, ...tabletLayout.tap }} onClick={() => setDarkMode(d => !d)}>
               {darkMode ? '☀️' : '🌙'}
             </button>
+            {isTablet && (
+              <button className="btn btn-sm btn-outline" style={{ ...tabletLayout.tap }} onClick={() => setShowLegend(true)}>
+                ❓ Legenda
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="segments-list" style={{ background: theme.bg }}>
+        <div className="segments-list" style={{ background: theme.bg, ...tabletLayout.list }}>
           {segments.length === 0 && (
             <div style={{ padding: 40, textAlign: 'center', color: theme.text2 }}>
               {episode.assUrl ? 'Caricamento...' : 'Nessun file .ass/.srt collegato.'}
@@ -873,7 +984,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               <button className="btn btn-sm btn-outline" onClick={() => setSelectedIds([])}>Deseleziona</button>
             </div>
           )}
-          {segments.length > 0 && selectedIds.length === 0 && (
+          {segments.length > 0 && selectedIds.length === 0 && !isTouch && (
             <div style={{ fontSize: 11, color: theme.text2, marginBottom: 6 }}>
               Shift+clic = seleziona un intervallo di righe · Ctrl+clic = aggiungi/togli una riga, poi applica lo stile a tutte insieme
             </div>
@@ -986,7 +1097,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           })}
         </div>
 
-        <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}` }}>
+        <div className="editor-actions" style={{ background: theme.card, borderTop: `1px solid ${theme.border}`, ...tabletLayout.actions }}>
           <button className="btn btn-sm btn-outline" onClick={() => { setSendType('checker'); setSendTo(''); setShowSendModal(true); }}>✉️ Traduzione completata → Invia al checker</button>
           <button className="btn btn-sm btn-success" onClick={() => { setSendType('encoding'); setShowSendModal(true); }}>✅ Check completato → Invia per encoding</button>
           {segments.length > 0 && <button className="btn btn-sm btn-outline" onClick={exportASS}>⬇️ Esporta .ass (con stili)</button>}
