@@ -19,7 +19,18 @@ function parseASS(text) {
       format = line.replace('Format:', '').split(',').map(s => s.trim()); continue;
     }
     if (inEvents && line.startsWith('Dialogue:')) {
-      const vals = line.replace('Dialogue:', '').split(',');
+      // Il Text (ultimo campo) puo' contenere virgole: si divide solo nei primi
+      // (n-1) punti e tutto il resto va nell'ultimo campo, altrimenti la frase
+      // verrebbe tagliata alla prima virgola ("Well, I still can't..." -> "Well").
+      let rest = line.replace('Dialogue:', '');
+      const vals = [];
+      while (vals.length < format.length - 1) {
+        const ci = rest.indexOf(',');
+        if (ci < 0) break;
+        vals.push(rest.slice(0, ci));
+        rest = rest.slice(ci + 1);
+      }
+      vals.push(rest);
       const obj = {};
       format.forEach((k, i) => { obj[k] = (vals[i] || '').trim(); });
       const txt = (obj.Text || '').replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').trim();
