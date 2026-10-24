@@ -441,6 +441,10 @@ function BulkAddEpisodesModal({ seriesId, existingEpisodes, onClose }) {
   const [radice, setRadice] = useState('');
   const [videoExt, setVideoExt] = useState('mkv');
   const [subExt, setSubExt] = useState('srt');
+  // Sub italiani gia' tradotti: stesso nome dei raw + ".ITA" prima dell'estensione
+  // (es. radice.01.ITA.ass), cosi' non si scontrano con i sub originali anche se sono .ass.
+  const [itExt, setItExt] = useState(''); // '' = nessuno
+  const [itSuffix, setItSuffix] = useState('ITA');
   const [epCount, setEpCount] = useState(1);
 
   const [loading, setLoading] = useState(false);
@@ -475,7 +479,7 @@ function BulkAddEpisodesModal({ seriesId, existingEpisodes, onClose }) {
           number: startNum + i,
           videoUrl: `${base}${radice.trim()}${num}.${videoExt}`,
           assUrl: `${base}${radice.trim()}${num}.${subExt}`,
-          assItUrl: '',
+          assItUrl: itExt ? `${base}${radice.trim()}${num}.${(itSuffix.trim() || 'ITA').replace(/^\.+|\.+$/g, '')}.${itExt}` : '',
         };
       });
     }
@@ -539,6 +543,24 @@ function BulkAddEpisodesModal({ seriesId, existingEpisodes, onClose }) {
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Sub italiani già tradotti</label>
+                <select className="input-field" value={itExt} onChange={e => setItExt(e.target.value)}>
+                  <option value="">Nessuno</option>
+                  <option value="ass">.ass</option><option value="srt">.srt</option>
+                </select>
+              </div>
+              <div className="form-row" style={{ flex: 1 }}>
+                <label className="label">Sigla nel nome (es. ITA)</label>
+                <input className="input-field" value={itSuffix} onChange={e => setItSuffix(e.target.value)} disabled={!itExt} />
+              </div>
+            </div>
+            {itExt && radice.trim() && (
+              <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: -6, marginBottom: 16 }}>
+                Il file italiano deve chiamarsi <code>{radice.trim()}{String(startNum).padStart(2, '0')}.{(itSuffix.trim() || 'ITA')}.{itExt}</code>
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div className="form-row" style={{ flex: 1 }}>
                 <label className="label">Numero primo episodio</label>
                 <input className="input-field" type="number" value={startNum} onChange={e => setStartNum(parseInt(e.target.value, 10) || 1)} />
               </div>
@@ -581,13 +603,14 @@ function BulkAddEpisodesModal({ seriesId, existingEpisodes, onClose }) {
         {rows.length > 0 && (
           <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 16 }}>
             <table className="table" style={{ margin: 0 }}>
-              <thead><tr><th>Ep.</th><th>Raw</th><th>Sub</th></tr></thead>
+              <thead><tr><th>Ep.</th><th>Raw</th><th>Sub</th><th>ITA</th></tr></thead>
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={i}>
                     <td style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{r.number}</td>
                     <td style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.videoUrl}>{r.videoUrl || '—'}</td>
                     <td style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.assUrl ? 'inherit' : '#ff5050' }} title={r.assUrl}>{r.assUrl || 'manca'}</td>
+                    <td style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)' }} title={r.assItUrl}>{r.assItUrl || '—'}</td>
                   </tr>
                 ))}
               </tbody>
