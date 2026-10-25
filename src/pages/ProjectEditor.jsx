@@ -185,7 +185,10 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   const [editTiming, setEditTiming] = useState({});
   const [currentSubtitles, setCurrentSubtitles] = useState([]);
   const [darkMode, setDarkMode] = useState(true);
-  const [fontSize, setFontSize] = useState(14);
+  const [fontSize, setFontSize] = useState(() => {
+    try { const v = parseInt(localStorage.getItem('editorFontSize'), 10); return v >= 10 && v <= 24 ? v : 14; } catch { return 14; }
+  });
+  useEffect(() => { try { localStorage.setItem('editorFontSize', String(fontSize)); } catch {} }, [fontSize]);
   const [loadingIt, setLoadingIt] = useState(false);
   const [gotoLine, setGotoLine] = useState('');
   const [gotoTime, setGotoTime] = useState('');
@@ -804,13 +807,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           </div>
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>{isTablet ? 'Mac / tastiera tablet' : 'Mac'}</div>
+          <div style={{ fontSize: 11, color: theme.text2, fontWeight: 'bold', marginBottom: 2 }}>{isTablet ? 'Mac (tablet: tieni premuta la lettera)' : 'Mac'}</div>
           <div style={{ fontSize: isTablet ? 14 : 12, color: theme.text2, lineHeight: 1.6, fontFamily: 'monospace' }}>
-            <div>Shift+à → À</div>
-            <div>Shift+è → È</div>
-            <div>Shift+ì → Ì</div>
-            <div>Shift+ò → Ò</div>
-            <div>Shift+ù → Ù</div>
+            <div>Shift+Opt+W → À</div>
+            <div>Shift+Opt+E → È</div>
+            <div>Shift+Opt+V → É</div>
+            <div>Shift+Opt+R → Ì</div>
+            <div>Shift+Opt+T → Ò</div>
+            <div>Shift+Opt+U → Ù</div>
           </div>
         </div>
       </div>
@@ -830,7 +834,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     list: { order: 4, flex: '1 1 0', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' },
     actions: { order: 5, flex: 'none', display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 12px calc(8px + env(safe-area-inset-bottom))' },
     tap: { minHeight: 44, minWidth: 44 },
-  } : { root: { background: theme.bg } };
+  } : {
+    root: { background: theme.bg },
+    // PC: colonna sinistra a colonna flessibile; il blocco sotto il video scorre da solo,
+    // cosi' la legenda si vede tutta fino in fondo.
+    contents: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+    info: { flex: '1 1 0', minHeight: 0, overflowY: 'auto', paddingBottom: 20 },
+    video: { flexShrink: 0 },
+  };
 
   return (
     <div
@@ -939,7 +950,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           {/* ── Legenda comandi + codici tastiera: box con altezza fissa e scroll proprio ── */}
           {!isTablet && (
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-              <div style={{ maxHeight: 200, overflowY: 'auto', paddingRight: 8 }}>
+              <div>
                 {legendContent}
               </div>
             </div>
@@ -997,7 +1008,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
           )}
           {segments.length > 0 && selectedIds.length === 0 && !isTouch && (
             <div style={{ fontSize: 11, color: theme.text2, marginBottom: 6 }}>
-              Shift+clic = seleziona un intervallo di righe · Ctrl+clic = aggiungi/togli una riga, poi applica lo stile a tutte insieme
+              Shift+clic = seleziona un intervallo di righe · Ctrl+clic (Mac: Cmd+clic) = aggiungi/togli una riga, poi applica lo stile a tutte insieme
             </div>
           )}
           {segments.length > 0 && (
