@@ -246,6 +246,14 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     border: 'rgba(139,0,139,0.25)', inputBg: '#ffffff', segBg: '#f8f8fc',
   };
 
+  // Tema chiaro: ridefinisce le variabili CSS globali (pensate per lo sfondo scuro) dentro
+  // l'editor, cosi' pulsanti, campi, modali e testi che le usano restano leggibili.
+  const themeVars = darkMode ? {} : {
+    '--text': '#1a1a2e', '--text2': '#555566', '--border': 'rgba(139,0,139,0.3)',
+    '--success': '#0a8f62', '--card': '#ffffff', '--bg': '#f0f0f5', '--bg2': '#ffffff', '--bg3': '#ececf4',
+    color: '#1a1a2e',
+  };
+
   // Carica segmenti originali
   useEffect(() => {
     if (!episode.assUrl) return;
@@ -815,6 +823,9 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
             <div>Shift+Opt+R → Ì</div>
             <div>Shift+Opt+T → Ò</div>
             <div>Shift+Opt+U → Ù</div>
+            <div style={{ marginTop: 6, fontFamily: 'var(--font-body)', fontSize: isTablet ? 13 : 11, lineHeight: 1.4 }}>
+              Se non escono (dipende dal layout della tastiera): tieni premuto Shift e la vocale, poi scegli l'accento dal menu. Oppure Ctrl+Cmd+Spazio (pannello caratteri).
+            </div>
           </div>
         </div>
       </div>
@@ -846,7 +857,7 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
   return (
     <div
       className="editor-layout"
-      style={tabletLayout.root}
+      style={{ ...tabletLayout.root, ...themeVars }}
     >
       {/* ── AVVISO: tablet in orizzontale → chiede di ruotare in verticale ── */}
       {isTablet && isLandscape && (
