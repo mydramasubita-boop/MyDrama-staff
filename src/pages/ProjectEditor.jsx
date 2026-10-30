@@ -423,17 +423,88 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
     const completed = segments.filter(s => translations[s.id]?.translated?.trim()).length;
     const total = segments.length;
     const pct = Math.round((completed / total) * 100);
+    // Numero (1-based) dell'ultima riga tradotta: serve alla lista progetti per
+    // mostrare "tradotto fino a riga X".
+    let lastLine = 0;
+    segments.forEach((s, i) => { if (translations[s.id]?.translated?.trim()) lastLine = i + 1; });
     const last = lastSavedProgressRef.current;
-    if (last && last.completed === completed && last.total === total) return;
+    if (last && last.completed === completed && last.total === total && last.lastLine === lastLine) return;
     if (progressSaveDebounceRef.current) clearTimeout(progressSaveDebounceRef.current);
     progressSaveDebounceRef.current = setTimeout(() => {
-      lastSavedProgressRef.current = { completed, total };
+      lastSavedProgressRef.current = { completed, total, lastLine };
       // translatedCount e' il nome che legge la dashboard admin (ProgressBar):
       // prima salvavo "completedSegments" e li' compariva "0/585 (100%)".
-      updateEpisode(episode.id, { progress: pct, translatedCount: completed, totalSegments: total });
+      updateEpisode(episode.id, { progress: pct, translatedCount: completed, totalSegments: total, lastTranslatedLine: lastLine });
     }, 800);
     return () => clearTimeout(progressSaveDebounceRef.current);
   }, [segments, translations, translationsLoaded, episode.id]);
+
+  // ── Riprendi da dove eri rimasta ──
+  // La posizione (riga attiva) e' salvata PER UTENTE sull'episodio (campo
+  // lastPos_<uid>), cosi' chi traduce e chi fa il check hanno ognuno la propria, e in
+  // piu' in localStorage (aggiornata subito, vale anche se la chiusura ha interrotto
+  // il salvataggio online). All'apertura vince la piu' recente. Se non c'e' nessuna
+  // posizione salvata ma ci sono righe tradotte, si parte dalla prima non tradotta.
+  const posUid = auth.currentUser?.uid || 'anon';
+  const posKey = `lastPos_${posUid}`;
+  const posLocalKey = `pos_${episode.id}_${posUid}`;
+  const restoredRef = useRef(false);
+  const posSaveRef = useRef(null);
+  const activeIdxRef = useRef(0);
+
+  useEffect(() => {
+    if (restoredRef.current || !translationsLoaded || segments.length === 0) return;
+    restoredRef.current = true;
+    let best = null;
+    const fromDb = liveEpisode[posKey] || episode[posKey];
+    if (fromDb && typeof fromDb.idx === 'number') best = fromDb;
+    try {
+      const l = JSON.parse(localStorage.getItem(posLocalKey));
+      if (l && typeof l.idx === 'number' && (!best || (l.ts || 0) > (best.ts || 0))) best = l;
+    } catch {}
+    let idx = best ? best.idx : -1;
+    if (idx < 0) {
+      const anyDone = segments.some(s => translations[s.id]?.translated?.trim());
+      const firstTodo = segments.findIndex(s => !translations[s.id]?.translated?.trim());
+      idx = anyDone && firstTodo >= 0 ? firstTodo : 0;
+    }
+    idx = Math.min(Math.max(idx, 0), segments.length - 1);
+    if (idx > 0) {
+      setActiveIdx(idx);
+      const seg = segments[idx];
+      if (videoRef.current && seg) videoRef.current.currentTime = timeToSec(translations[seg.id]?.timingStart || seg.start);
+      setTimeout(() => activeSegRef.current?.scrollIntoView({ block: 'center' }), 200);
+    }
+  }, [segments, translationsLoaded]);
+
+  const writePosition = (idx) => {
+    const payload = { idx, ts: Date.now() };
+    try { localStorage.setItem(posLocalKey, JSON.stringify(payload)); } catch {}
+    return payload;
+  };
+
+  useEffect(() => {
+    activeIdxRef.current = activeIdx;
+    if (!restoredRef.current) return;
+    const payload = writePosition(activeIdx);
+    clearTimeout(posSaveRef.current);
+    posSaveRef.current = setTimeout(() => {
+      Promise.resolve(updateEpisode(episode.id, { [posKey]: payload })).catch(() => {});
+    }, 1500);
+  }, [activeIdx]);
+
+  // All'uscita dall'episodio scrive subito l'ultima posizione (senza aspettare il debounce).
+  useEffect(() => () => {
+    clearTimeout(posSaveRef.current);
+    if (!restoredRef.current) return;
+    const payload = writePosition(activeIdxRef.current);
+    Promise.resolve(updateEpisode(episode.id, { [posKey]: payload })).catch(() => {});
+  }, []);
+
+  const goFirstUntranslated = () => {
+    const i = segments.findIndex(s => !translations[s.id]?.translated?.trim());
+    if (i >= 0) selectSegment(i);
+  };
 
   // Scrittura effettiva su Firestore, SEMPRE con gestione dell'errore: prima
   // girava senza await ne' catch, quindi se la scrittura falliva (connessione
@@ -947,6 +1018,11 @@ export default function ProjectEditor({ series, episode, profile, onBack }) {
               <button className="btn btn-sm btn-outline" style={{ fontSize: 11, padding: '6px 10px' }} onClick={handleGotoTime}>Vai</button>
             </div>
           </div>
+          {segments.length > 0 && completedCount < segments.length && (
+            <button className="btn btn-sm btn-outline" style={{ marginBottom: 12, width: '100%', fontSize: 11, ...tabletLayout.tap }} onClick={goFirstUntranslated}>
+              ⏭ Vai alla prima riga non tradotta
+            </button>
+          )}
           <div style={{ fontSize: 12, color: theme.text2, marginBottom: 8 }}>{completedCount}/{segments.length} tradotti ({progress}%)</div>
           <div style={{ height: 4, background: darkMode ? '#0f0f1a' : '#ddd', borderRadius: 2 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, var(--primary), var(--secondary))', borderRadius: 2, transition: 'width 0.3s' }} />
