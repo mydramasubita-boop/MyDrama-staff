@@ -1,11 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { logoutUser, getSeries, getEpisodes } from '../firebase.js';
 import { auth } from '../firebase.js';
+
+// Riassunto avanzamento traduzione mostrato sotto il titolo nelle liste progetti.
+// Serie: ultimo episodio con righe tradotte e fino a dove. Film: fino a dove.
+function progressSummary(isFilm, eps) {
+  if (!eps || eps.length === 0) return '';
+  const fmt = (e) => {
+    const tot = e.totalSegments, done = e.translatedCount || 0;
+    if (tot && done >= tot) return 'completo';
+    if (!tot) return '';
+    const line = e.lastTranslatedLine;
+    const pct = e.progress ?? Math.round((done / tot) * 100);
+    return line ? `fino a riga ${line}/${tot} (${pct}%)` : `${done}/${tot} righe (${pct}%)`;
+  };
+  if (isFilm) {
+    const e = eps[0];
+    if (!(e.translatedCount > 0)) return 'Traduzione non ancora iniziata';
+    return `Tradotto ${fmt(e)}`;
+  }
+  const started = eps.filter(e => (e.translatedCount || 0) > 0);
+  if (started.length === 0) return 'Traduzione non ancora iniziata';
+  const last = started.reduce((a, b) => ((b.number || 0) > (a.number || 0) ? b : a));
+  return `Ultimo tradotto: Ep. ${last.number} — ${fmt(last)}`;
+}
 
 export default function StaffDashboard({ profile, onOpenEpisode }) {
   const [series, setSeries] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [episodes, setEpisodes] = useState({});
+  const unsubsRef = useRef({});
 
   useEffect(() => {
     const unsub = getSeries(all => {
@@ -14,11 +38,21 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
     return unsub;
   }, []);
 
+  // Un listener episodi per ogni serie assegnata (non solo quelle aperte), cosi'
+  // sotto il titolo si vede subito a che punto e' la traduzione.
+  useEffect(() => {
+    series.forEach(s => {
+      if (!unsubsRef.current[s.id]) {
+        unsubsRef.current[s.id] = getEpisodes(s.id, (eps) => setEpisodes(prev => ({ ...prev, [s.id]: eps })));
+      }
+    });
+  }, [series]);
+  useEffect(() => () => {
+    Object.values(unsubsRef.current).forEach(u => { if (typeof u === 'function') u(); });
+  }, []);
+
   const toggleExpand = (id) => {
     setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
-    if (!episodes[id]) {
-      getEpisodes(id, (eps) => setEpisodes(prev => ({ ...prev, [id]: eps })));
-    }
   };
 
   const statusLabel = (s) => {
@@ -56,7 +90,10 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
                 <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', cursor: 'pointer', borderBottom: expanded[s.id] ? '1px solid var(--border)' : 'none' }} onClick={() => toggleExpand(s.id)}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: 'var(--font-display)', fontSize: 16 }}>{s.title}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>{s.isFilm ? 'Film' : `Serie • ${s.episodeCount || 0} episodi`}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>{s.isFilm ? 'Film' : `Serie • ${(episodes[s.id] || []).length || s.episodeCount || 0} episodi`}</div>
+                    {progressSummary(s.isFilm, episodes[s.id]) && (
+                      <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 4 }}>{progressSummary(s.isFilm, episodes[s.id])}</div>
+                    )}
                   </div>
                   <span style={{ color: 'var(--text2)', fontSize: 18 }}>{expanded[s.id] ? '▲' : '▼'}</span>
                 </div>
@@ -64,7 +101,7 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
                   <div style={{ padding: '16px 24px' }}>
                     <div className="table-scroll">
                     <table className="table">
-                      <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th></th></tr></thead>
+                      <thead><tr><th>Ep.</th><th>Titolo</th><th>Stato</th><th>Tradotte</th><th></th></tr></thead>
                       <tbody>
                         {(episodes[s.id] || []).map(ep => {
                           const st = statusLabel(ep.status);
@@ -73,6 +110,7 @@ export default function StaffDashboard({ profile, onOpenEpisode }) {
                               <td style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{ep.number}</td>
                               <td>{ep.title || `Episodio ${ep.number}`}</td>
                               <td><span className={`project-status ${st.cls}`}>{st.label}</span></td>
+                              <td style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{ep.totalSegments ? `${ep.translatedCount || 0}/${ep.totalSegments} (${ep.progress || 0}%)` : '—'}</td>
                               <td><button className="btn btn-sm btn-grad" onClick={() => onOpenEpisode({ series: s, episode: ep })}>Apri</button></td>
                             </tr>
                           );
