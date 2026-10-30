@@ -253,6 +253,29 @@ export default function AdminDashboard({ profile, onOpenEpisode }) {
   );
 }
 
+// Riassunto avanzamento traduzione mostrato sotto il titolo nelle liste progetti.
+// Serie: ultimo episodio con righe tradotte e fino a dove. Film: fino a dove.
+function progressSummary(isFilm, eps) {
+  if (!eps || eps.length === 0) return '';
+  const fmt = (e) => {
+    const tot = e.totalSegments, done = e.translatedCount || 0;
+    if (tot && done >= tot) return 'completo';
+    if (!tot) return '';
+    const line = e.lastTranslatedLine;
+    const pct = e.progress ?? Math.round((done / tot) * 100);
+    return line ? `fino a riga ${line}/${tot} (${pct}%)` : `${done}/${tot} righe (${pct}%)`;
+  };
+  if (isFilm) {
+    const e = eps[0];
+    if (!(e.translatedCount > 0)) return 'Traduzione non ancora iniziata';
+    return `Tradotto ${fmt(e)}`;
+  }
+  const started = eps.filter(e => (e.translatedCount || 0) > 0);
+  if (started.length === 0) return 'Traduzione non ancora iniziata';
+  const last = started.reduce((a, b) => ((b.number || 0) > (a.number || 0) ? b : a));
+  return `Ultimo tradotto: Ep. ${last.number} — ${fmt(last)}`;
+}
+
 function ProgressBar({ translatedCount, totalSegments, progress }) {
   if (totalSegments === undefined || totalSegments === null) {
     return <span style={{ fontSize: 11, color: 'var(--text2)', fontStyle: 'italic' }}>Non ancora aperto</span>;
@@ -284,6 +307,9 @@ function SeriesCard({ series, users, episodes, expanded, onToggle, onDelete, onO
             {' • '}
             {(series.team || []).map(uid => users.find(u => u.id === uid)?.name).filter(Boolean).join(', ')}
           </div>
+          {progressSummary(series.isFilm, episodes) && (
+            <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 4 }}>{progressSummary(series.isFilm, episodes)}</div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); setEditSeries(true); }}>✏️</button>
